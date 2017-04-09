@@ -1,0 +1,51 @@
+---
+title: Memorylessness and the Exponential Distribution
+tags: Probability
+---
+
+Imagine you're a teller at a bank.  No customers have been arriving, so you're bored, and decide to investigate the distribution of the time it takes for the each customer to arrive (you're a very analytically-minded bank teller).  To this end, you decide to track the number of customers that arrive in the next hour.  Forty-five minutes in, you are getting impatient, as no customers have arrived.  At this point, what is the probability that a single customer will arrive before the end of the hour?  It seems reasonable that this probability should be the same as that of an arrival during the first fifteen minutes of the experiment.
+
+This post is devoted to showing the remarkable fact that this reasonable and seemingly small assumption about the distribution of interarrival times actually completely specifies their probability distribution (along with the mean of the interarrival times).
+
+Let $T$ be the arrival time of the first customer.  The situation in the introduction leads to the identity
+
+$$P(T > 60 | T > 45) = P(T > 15).$$
+
+This identity generalizes to
+
+$$P(T > s + t | T > t) = P(T > s),$$
+
+for $s, t > 0$.  Any distribution which satisfies this requirement is called [memoryless](http://en.wikipedia.org/wiki/Memorylessness).  In this post, we will show that the [exponential distribution](http://en.wikipedia.org/wiki/Exponential_distribution) is the only (continuous) memoryless distribution.  We can rewrite this identity as
+
+$$
+\begin{align*}
+\frac{P(T > s + t \textrm{ and } T > t)}{P(T > t)}
+    & = P(T > s),    \\
+P(T > s + t)
+    & = P(T > s) P(T > t),
+\end{align*}
+$$
+
+since $T > s + t$ implies $T > t$.  It is this identity connection addition and multiplication that leads to the exponential distribution.  To begin to see this, let's to calculate $P(T > 2)$:
+
+$$P(T > 2) = P(T > 1 + 1) = P(T > 1) P(T > 1) = P(T > 1)^2.$$
+
+Similarly, $P(T > 3) = P(T > 1)^3$, and for any natural number $n$, $P(T > n) = P(T > 1)^n$.  For reasons which will become clear, define $\lambda = - \ln P(T > 1)$, so that $P(T > 1) = e^{-\lambda}$, and $P(T > n) = e^{-\lambda n}$.
+
+Continuing on, let's calculate $P(T > \frac{1}{2})$:
+
+$$e^{-\lambda} = P\left(T > 1\right) = P\left(T > \frac{1}{2} + \frac{1}{2}\right) = P\left(T > \frac{1}{2}\right)^2,$$
+
+so $P(T > \frac{1}{2}) = \exp(-\frac{\lambda}{2})$.  This sort of calculation can be extended to any rational number $\frac{m}{n}$ as follows
+
+$$e^{-\lambda m} = P(T > m) = P\left(T > \underbrace{\frac{m}{n} + \cdots + \frac{m}{n}}_{n \textrm{ times}}\right) = P\left(T > \frac{m}{n}\right)^n,$$
+
+so $P(T > \frac{m}{n}) = \exp(-\lambda \frac{m}{n})$.  All that remains is to extend this result to the irrational numbers.  Fortunately, the rational numbers are [dense](http://en.wikipedia.org/wiki/Dense_set#Examples) in the rals, every irrational, $t$ number is the limit of an increasing sequence of rational numbers, $(q_i)$.  Additonally, the [survival function](http://en.wikipedia.org/wiki/Survival_function), $t \mapsto P(T > t)$ must be left-continuous, so
+
+$$P(T > t) = \lim P(T > q_i) = \lim \exp(-\lambda q_i) = e^{-\lambda t},$$
+
+since the exponential function is continuous.  Now that we know that $P(T > t) = e^{-\lambda t}$ for all $t > 0$, we see that this is exactly the survival function of an exponentially distributed random variable with mean $\lambda^{-1}$.
+
+It is truly astounding that such a seemingly small assumption about the arrival time completely specifies its distribution.  The memorylessness of the exponential distribution is immensely important in the study of [queueing theory](http://en.wikipedia.org/wiki/Queueing_theory), as it implies that the homogeneous [Poisson process](http://en.wikipedia.org/wiki/Poisson_process) has [stationary increments](http://en.wikipedia.org/wiki/Stationary_increments#Stationary_increments).
+
+<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

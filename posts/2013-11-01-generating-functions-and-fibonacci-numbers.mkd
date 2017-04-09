@@ -1,0 +1,206 @@
+---
+title: Generating Functions and the Fibonacci Numbers
+tags: Math, Discrete Math, Generating Functions, Fibonacci Numbers
+---
+
+<div style="display:none">$\renewcommand{\phi}{\varphi}$</div>
+
+Wikipedia defines a [generating function](http://en.wikipedia.org/wiki/Formal_power_series) as
+
+> a formal power series in one indeterminate, whose coefficients encode information about a sequence of numbers an that is indexed by the natural numbers.
+
+Generating functions are useful tools with many applications to [discrete mathematics](http://en.wikipedia.org/wiki/Discrete_mathematics).  In this post, we'll show how they can be used to find a closed form expression for certain [recurrence relations](http://en.wikipedia.org/wiki/Recurrence_relation) by proving that
+
+$$
+\begin{align*}
+F_n
+    & = \frac{1}{\sqrt{5}} \left( \left( \frac{1 + \sqrt{5}}{2} \right)^n - \left( \frac{1 - \sqrt{5}}{2} \right)^n \right)
+\end{align*}
+$$
+
+where $F_n$ is the $n$-th Fibonacci number.  The derivation of this formula is quite accessible to anyone comfortable with algebra and [geometric series](http://en.wikipedia.org/wiki/Geometric_series).  For a much broader introduction to many of the uses of generating functions, refer to [Prof. Herbert Wilf's](http://www.math.upenn.edu/~wilf/) excellent book [generatingfunctionology](http://www.math.upenn.edu/~wilf/DownldGF.html), the second edition of which is available as a free download.
+
+Recall that the Fibonacci numbers are defined by the recurrence relation
+$$
+\begin{align*}
+F_n
+    & = F_{n - 1} + F_{n - 2}
+\end{align*}
+$$
+
+for $n \geq 2$, with $F_0 = 0$ and $F_1 = 1$.
+
+We begin by defining the generating function for the Fibonacci numbers as the [formal power series](http://en.wikipedia.org/wiki/Formal_power_series) whose coefficients are the Fibonacci numbers themselves,
+
+$$
+\begin{align*}
+F(x)
+    & = \sum_{n = 0}^\infty F_n x^n
+      = \sum_{n = 1}^\infty F_n x^n,
+\end{align*}
+$$
+
+since $F_0 = 0$.
+
+We then separate the two initial terms from the sum and subsitute the recurrence relation for $F_n$ into the coefficients of the sum.
+
+$$
+\begin{align*}
+F(x)
+    & = x + \sum_{n = 2}^\infty F_n x^n \\
+    & = x + \sum_{n = 2}^\infty (F_{n - 1} + F_{n - 2}) x^n \\
+    & = x + \sum_{n = 2}^\infty F_{n - 1} x^n + \sum_{n = 2}^\infty F_{n - 2} x^n
+\end{align*}
+$$
+
+We now focus on rewriting each of these two sums in terms of the generating function.  For the first sum, we have
+
+$$
+\begin{align*}
+\sum_{n = 2}^\infty F_{n - 1} x^n
+    & = x \sum_{n = 2}^\infty F_{n - 1} x^{n - 1}
+      = x \sum_{n = 1}^\infty F_n x^n
+      = x F(x).
+\end{align*}
+$$
+
+Similarly, for the second sum, we have
+$$
+\begin{align*}
+\sum_{n = 2}^\infty F_{n - 2} x^n
+    & = x^2 \sum_{n = 2}^\infty F_{n - 2} x^{n - 2}
+      = x^2 \sum_{n = 0}^\infty F_n x^n
+      = x^2 F(x).
+\end{align*}
+$$
+
+We therefore have that
+
+$$
+\begin{align*}
+F(x)
+    & = x + x F(x) + x^2 F(x).
+\end{align*}
+$$
+
+Sovling for the generating function, we get
+
+$$
+\begin{align*}
+F(x)
+    & = \frac{x}{1 - x - x^2}.
+\end{align*}
+$$
+
+Now that we have found a closed form for the generating function, all that remains is to express this function as a power series.  After doing so, we may match its coefficients term-by-term with the corresponding Fibonacci numbers.  The roots of the polynomial $1 - x - x^2$ are $-\phi$ and $-\psi$, where
+
+$$
+\begin{align*}
+\phi
+    & = \frac{1 + \sqrt{5}}{2}
+\end{align*}
+$$
+
+and
+
+$$
+\begin{align*}
+\psi
+    & = \frac{1 - \sqrt{5}}{2},
+\end{align*}
+$$
+
+so the polynomial factors as $1 - x - x^2 = - (x + \phi) (x + \psi)$.
+
+In order to express the generating function as a power series, we will use the [partial fraction decomposition](http://en.wikipedia.org/wiki/Partial_fraction_decomposition) to express it in the form
+
+$$
+\begin{align*}
+F(x)
+    & = -\frac{x}{(x + \phi) (x + \psi)}
+      = \frac{A}{x + \phi} + \frac{B}{x + \psi},
+\end{align*}
+$$
+
+which is equivalent to
+
+$$
+\begin{align*}
+-x
+    & = A (x + \psi) + B (x + \phi).
+\end{align*}
+$$
+
+
+Letting $x = -\phi$, we find that $A = -\frac{\phi}{\sqrt{5}}$.  Similarly, letting $x = -\psi$, we get that $B = \frac{\psi}{\sqrt{5}}$.  Therefore
+
+$$
+\begin{align*}
+F(x)
+    & = \frac{1}{\sqrt{5}} \left( \frac{\psi}{x + \psi} - \frac{\phi}{x + \phi} \right).
+\end{align*}
+$$
+
+We now wish to express each of these two terms as the sum of a geometric series.  Recall that the sum of a [geometric series](http://en.wikipedia.org/wiki/Geometric_series) is given by
+
+$$
+\begin{align*}
+\frac{1}{1 - x}
+    & = \sum_{n = 0}^\infty x^n.
+\end{align*}
+$$
+
+Note that this infinite sum converges if and only if $|x| < 1$.  However, considered as a [formal power series](http://en.wikipedia.org/wiki/Formal_power_series), this identity always holds.  We use this identity, and the fact that $\phi = -\frac{1}{\psi}$, to rewrite the first term of the generating function as
+
+$$
+\begin{align*}
+\frac{\psi}{x + \psi}
+    & = \frac{1}{1 + \frac{x}{\psi}}    \\
+    & = \frac{1}{1 - \phi x}    \\
+    & = \sum_{n = 0}^\infty \phi^n x^n.
+\end{align*}
+$$
+
+Similarly,
+
+$$
+\begin{align*}
+\frac{\phi}{x + \phi}
+    & = \sum_{n = 0}^\infty \psi^n x^n,
+\end{align*}
+$$
+
+so
+
+$$
+\begin{align*}
+F(x)
+    & = \frac{1}{\sqrt{5}} \left( \frac{\psi}{x + \psi} - \frac{\phi}{x + \phi} \right) \\
+    & = \frac{1}{\sqrt{5}} \left( \sum_{n = 0}^\infty \phi^n x^n - \sum_{n = 0}^\infty \psi^n x^n \right)   \\
+    & = \sum_{n = 0}^\infty \frac{1}{\sqrt{5}} \left( \phi^n - \psi^n \right) x^n.
+\end{align*}
+$$
+
+Since the definition of $F(x)$ was
+
+$$
+\begin{align*}
+F(x)
+    & = \sum_{n = 0}^\infty F_n x^n,
+\end{align*}
+$$
+
+we match the coefficients on corresponding powers of $x$ in these two expressions for $F(x)$ to finally arrive at the desired closed form for the $n$-th Fibonacci number,
+
+$$
+\begin{align*}
+F_n
+    & = \frac{1}{\sqrt{5}} \left( \phi^n - \psi^n \right).
+\end{align*}
+$$
+
+Deriving this identity gives an excellent glimpse of the power of generating functions.  Again, for a much more thorough treatment of their many applications, consult [generatingfunctionology](http://www.math.upenn.edu/~wilf/DownldGF.html).
+
+Discussion on [Hacker News](https://news.ycombinator.com/item?id=6660311)
+
+<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

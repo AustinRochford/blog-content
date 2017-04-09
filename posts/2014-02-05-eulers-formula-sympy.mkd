@@ -1,0 +1,207 @@
+---
+title: Euler's Formula in sympy
+tags: Math, Python
+---
+
+Euler's formula,
+
+$$e^{i \theta} = \cos \theta + i \sin \theta,$$
+
+is both a beautiful and eminently useful result about the complex numbers.  It
+leads directly to the more widely known Euler's identity,
+
+$$e^{i \pi} + 1 = 0,$$
+
+which shows a somewhat suprising connection between five of the most significant
+numbers in mathematics.  There are many proofs of Euler's formula, but as
+someone who has taught Calculus II for many years, the proof using Taylor series
+is rather close to my heart.  In this post, we'll explore this proof using
+`sympy`, a Python library for symbolic mathematics, in order to avoid using
+calculus ourselves.
+
+The basic idea of Taylor series is that many (though not all) functions on the
+real line may be represented by polynomials of infinite degree.  The most well-
+known example of a Taylor series is the sum the geometric series,
+
+$$\frac{1}{1 - x} = 1 + x + x^2 + x^3 + x^4 + x^5 + \cdots$$
+
+for $|x| < 1$.
+
+We can illustrate this sum in `sympy` as follows.
+
+```python
+from sympy.interactive import printing
+printing.init_printing()
+
+import sympy as sym
+```
+
+```python
+x = sym.Symbol('x')
+sym.series(1 / (1 - x))
+```
+
+
+
+$$1 + x + x^{2} + x^{3} + x^{4} + x^{5} + \mathcal{O}\left(x^{6}\right)$$
+
+
+
+The term
+
+
+```python
+sym.Order(x**6)
+```
+
+
+
+
+$$\mathcal{O}\left(x^{6}\right)$$
+
+
+
+here indicates that all of the omitted terms have degree greater than or equal
+to six.  Naturally, `sympy` can only ever calculate finitely many terms of a
+functions Taylor series.  (We'll discuss the impact of this limitation on our
+"proof" later.)  We may control the number of terms of the Taylor series
+calculated by `sympy` by passing the optional argument `n` to `sympy.series`.
+For example, we may calculate the first ten terms of the geometric series as
+follows.
+
+```python
+sym.series(1 / (1 - x), n=10)
+```
+
+
+
+
+$$1 + x + x^{2} + x^{3} + x^{4} + x^{5} + x^{6} + x^{7} + x^{8} + x^{9} + \mathcal{O}\left(x^{10}\right)$$
+
+
+
+We now turn our attentation to Euler's formula by first defining the variable
+`theta`.
+
+
+```python
+theta = sym.Symbol('\\theta', real=True)
+theta
+```
+
+
+
+
+$$\theta$$
+
+
+
+We also define functions to calculate the Taylor series of $\sin \theta$ and
+$\cos \theta$ for any degree $n$.
+
+
+```python
+def sin_series(n):
+    return sym.series(sym.sin(theta), n=n)
+
+def cos_series(n):
+    return sym.series(sym.cos(theta), n=n)
+```
+
+The first few terms for the series of $\sin \theta$ are
+
+
+```python
+n = 10
+
+
+sin_series(n)
+```
+
+
+
+
+$$\theta - \frac{\theta^{3}}{6} + \frac{\theta^{5}}{120} - \frac{\theta^{7}}{5040} + \frac{\theta^{9}}{362880} + \mathcal{O}\left(\theta^{10}\right)$$
+
+
+
+and the first few for $\cos \theta$ are
+
+```python
+cos_series(n)
+```
+
+
+
+
+$$1 - \frac{\theta^{2}}{2} + \frac{\theta^{4}}{24} - \frac{\theta^{6}}{720} + \frac{\theta^{8}}{40320} + \mathcal{O}\left(\theta^{10}\right)$$
+
+
+
+Let's compare these two series to that for $e^{i \theta}$.
+
+```python
+def exp_series(n):
+    return sym.series(sym.exp(sym.I * theta), n=n)
+
+
+exp_series(n)
+```
+
+
+
+
+$$1 + i \theta - \frac{\theta^{2}}{2} - \frac{i \theta^{3}}{6} + \frac{\theta^{4}}{24} + \frac{i \theta^{5}}{120} - \frac{\theta^{6}}{720} - \frac{i \theta^{7}}{5040} + \frac{\theta^{8}}{40320} + \frac{i \theta^{9}}{362880} + \mathcal{O}\left(\theta^{10}\right)$$
+
+
+
+The key idea behind this proof of Euler's formula is that the terms of this sum
+containing $i$ are identical (apart form the $i$) to the terms of the Taylor
+series for $\sin \theta$.  Similary, the terms not containing $i$ are identical
+to the terms from the Taylor series of $\cos \theta$.
+
+We can see this more clearly by asking `sympy` to collect the terms containing
+$i$.
+
+
+```python
+sym.collect(exp_series(n), sym.I)
+```
+
+
+
+
+$$1 + i \left(\theta - \frac{\theta^{3}}{6} + \frac{\theta^{5}}{120} - \frac{\theta^{7}}{5040} + \frac{\theta^{9}}{362880} + \mathcal{O}\left(\theta^{10}\right)\right) - \frac{\theta^{2}}{2} + \frac{\theta^{4}}{24} - \frac{\theta^{6}}{720} + \frac{\theta^{8}}{40320} + \mathcal{O}\left(\theta^{10}\right)$$
+
+
+
+Odd placement of the leading one aside, we immediately recognize this expression
+as $\sin \theta + i \cos \theta$.
+
+In addition to this visual inspection, `sympy` makes it fairly easy to verify
+that the Taylor series agree to a fairly large number of terms.
+
+
+```python
+N = 100
+
+sym.simplify(exp_series(N) - (cos_series(N) + sym.I * sin_series(N)))
+```
+
+
+
+
+$$\mathcal{O}\left(\theta^{100}\right)$$
+
+
+
+So we see a bit more formally that Euler's formula is quite likely to be true.
+The weasel work "likely" is necessary here because we really only checked that
+finitely many terms of the infinite Taylor series for $e^{i \theta}$ and $\cos
+\theta + i \sin \theta$ agree.  Fortunately, armed with a bit of calculus
+knowledge, a pen, and some paper, we could verify by hand that all of the terms
+coincide, if we were so inclided.
+
+Discussion on [Hacker News](https://news.ycombinator.com/item?id=7186878)
+
+<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

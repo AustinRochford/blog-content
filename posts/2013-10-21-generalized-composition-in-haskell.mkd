@@ -1,0 +1,109 @@
+---
+title: Generalized Composition in Haskell
+tags: Haskell, Functional Programming
+---
+
+To me, the most beautiful Haskell code is [point-free](http://www.haskell.org/haskellwiki/Pointfree).  As an example of the point-free style, consider the following function which determines the length of a list.
+
+```haskell
+length' :: [a] -> Int
+length' = sum . map (const 1)
+```
+
+As my knowledge of Haskell has deepened, my appreciation for the ability of the combinators provided by libraries such as [`Control.Arrow`](http://hackage.haskell.org/package/base-4.6.0.1/docs/Control-Arrow.html), [`Control.Monad`](http://hackage.haskell.org/package/base-4.6.0.1/docs/Control-Monad.html), [`Control.Applicative`](http://www.haskell.org/ghc/docs/latest/html/libraries/base/Control-Applicative.html), [`Data.Either`](http://hackage.haskell.org/package/base-4.6.0.1/docs/Data-Either.html), and [`Data.Maybe`](http://hackage.haskell.org/package/base-4.6.0.1/docs/Data-Maybe.html), to express more complicated functions in the point-free style has grown.  (Note that all of these libraries are also important for reasons other than writing point-free code.)
+
+Point-free Haskell makes liberal use of the composition operator, `(.)`.  Recall that the definition of composition is
+
+```haskell
+(.) :: (b -> c) -> (a -> b) -> a -> c
+(f . g) x = f $ g x
+          = f (g x)
+```
+
+While this operator is immensely useful, it cannot express all forms of composition.  For example, consider the problem of determining whether nor not any elements of a list satisfy a predicate (like [`any`](http://hackage.haskell.org/package/base-4.6.0.1/docs/Data-List.html#g:4) from [`Data.List`](http://hackage.haskell.org/package/base-4.6.0.1/docs/Data-List.html)).  Written in the pointed style, such a function is simple.
+
+```haskell
+any' :: (a -> Bool) -> [a] -> Bool
+any' p xs = not $ null $ filter p xs
+```
+
+This function is an excellent candidate to be refactored to be point-free.  In fact, whenever the last argument of a function *only* appears in the last (rightmost) place in its definition, it may be refactored to be point free.  For `any'`, we refactor as
+
+```haskell
+any' p = not . null . filter p
+```
+
+We see again that, by our heuristic, this function should be able to be refactored to be completely point-free by removing the predicate `p`.
+
+```haskell
+any' = not . null . filter
+```
+
+Unfortunately, this implementation of `any'` will not type-check, giving the following error.
+
+```
+Couldn't match expected type `[a0]' with actual type `[a1] -> [a1]'
+    Expected type: (a1 -> Bool) -> [a0]
+      Actual type: (a1 -> Bool) -> [a1] -> [a1]
+    In the second argument of `(.)', namely `filter'
+    In the second argument of `(.)', namely `null . filter'
+```
+
+There problem is that `filter :: (a -> Bool) -> [a] -> [a]` is a function of two arguments, but composition, `(.)`, expects a function of one argument.  It is simple enough to define a function that does the sort of composition we need,
+
+```haskell
+(##) :: (c -> d) -> (a -> b -> c) -> a -> b -> d
+(f ## g) x y = f $ g x y
+```
+
+Using this function, we may implement `any'` in a completely point-free manner as
+
+```haskell
+any' = (not . null) ## filter
+```
+
+This implementation is nice, be we have really just pushed the pointed code into `(##)`.  Before finding a point-free implementation of `(##)`, let's rewrite this definition a bit.
+
+```haskell
+(f ## g) x y = f $ g x y
+             = f $ (g x) y
+             = f . (g x) $ y
+```
+
+So we may move one step closer to a point-free implementation with
+
+```haskell
+(f ## g) x = f . (g x)
+           = (f .) (g x)
+           = (f .) $ g x
+           = (f .) . g $ x
+```
+
+Therefore
+
+```haskell
+(f ## g) = (f .) . g
+```
+
+This implementation is still not quite point-free, so we write
+
+```haskell
+(f ## g) = (f .) . g
+         = (.) (f .) g
+```
+
+so
+
+```haskell
+(##) f = (.) (f .)
+       = (.) ((.) f)
+       = ((.) . (.)) f
+```
+
+Therefore, the point-free implementation of `(##)` is
+
+```haskell
+(##) = ((.) . (.))
+```
+
+This implementation is a bit mind-bending at first, but really cool once you wrap your head around it.

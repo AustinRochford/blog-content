@@ -1,0 +1,55 @@
+---
+title: The Median-of-Medians Algorithm
+tags: Algorithms
+---
+
+In this post, we consider the problem of selecting the $i$-th smallest element from an unsorted list of $n$ elements.  Somewhat surprisingly, there is an algorithm that solves this problem in linear time.  This surprising algorithm is one of my favorites.
+
+We will arrive at this algorithm gradually by considering progressively more sophistocated approaches to this problem.
+
+The naive approach to this problem is simply to sort the list and choose the $i$-th element.  This approach gives us an upper bound of $O(n \log n)$ on the complexity of the solution of this problem.  This approach does, however, seem to be overkill.  We don't need to know all of the [order statistics](http://en.wikipedia.org/wiki/Order_statistic) in order to solve the problem, which is what sorting the list gives us.
+
+In order to prove the plausibility of a more efficient algorithm, it is instructive to consider a special case of the selection problem, finding the smallest element in the list.  It is immediately clear that this problem may be solved in linear time by iterating over the list while keeping track of the smallest element seen so far.
+
+Finally, we arrive at the median-of-medians algorithm, which solves the general selection problem in linear time.  The idea behind the algorithm is similar to the idea behind [quicksort](http://en.wikipedia.org/wiki/Quicksort).  
+
+1. Select a pivot element, and partition the list into two sublists, the first of which contains all elements smaller than the pivot, and the second of which contains all elements greater than the pivot.
+2. Call the index of the pivot in the partitioned list $k$.  If $k = i$, then return the pivot element.
+3. If $i < k$, recurse into the sublist of elements smaller than the pivot, looking for the $i$-th smallest element.
+4. If $i > k$, recurse into the sublist of elements larger than the pivot, looking for the $(i - k - 1)$-th smallest element.
+
+Nothing in the above outline is terribly deep; it's just a straighforward divide-and-conquer approach to solving the selection problem.  The clever part of the algorithm is the choice of pivot element.
+
+It is not hard to see that, much like quicksort, if we naively choose the pivot element, this algorithm has a worst case performance of $O(n^2)$.  Continuing the parallel with quicksort, if we choose a random pivot, we get expected linear time performance, but still a worst case scenario of quadratic time.  (For a proof of this fact, see [CLRS](http://mitpress.mit.edu/books/introduction-algorithms).)
+
+To guarantee the linear running time of our algorithm, however we need a strategy for choosing the pivot element that guarantees that we partition the list into two sublists of relatively comparable size.  Obviously the [median](http://en.wikipedia.org/wiki/Median) of the values in the list would be the optimal choice, but if we could find the median in linear time, we would already have a solution to the general selection problem (consider this a small exercise).
+
+The median-of-medians algorithm chooses its pivot in the following clever way.
+
+1. Divide the list into sublists of length five.  (Note that the last sublist may have length less than five.)
+2. Sort each sublist and determine its median directly.
+3. Use the median of medians algorithm to recursively determine the median of the set of all medians from the previous step.  (This step is what gives the algorithm its name.)
+4. Use the median of the medians from step 3 as the pivot.
+
+The beauty of this algorithm is that it guarantees that our pivot is not too far from the true median.  To find an upper bound on the number of elements in the list smaller than our pivot, first consider the half of the medians from step 2 which are smaller than the pivot.  It is possible for all five of the elements in the sublists corresponding to these medians to be smaller than the pivot, which leads to an upper bound of $\frac{5}{2} \lceil \frac{n}{5} \rceil$ such elements.  Now consider the half of the medians from step 2 which are larger than the pivot.  It is only possible for two of the elements in the sublists corresponding to these medians (the elements smaller than the median) to be smaller than the pivot, which leads to an upper bound of $\lceil \frac{n}{5} \rceil$ such elements.  In addition, the sublist containing the pivot contributes exactly two elements smaller than the pivot.  It total, we may have at most
+
+$$
+\begin{align*}
+    \frac{5}{2} \left\lceil \frac{n}{5} \right\rceil + \left\lceil \frac{n}{5} \right\rceil + 2
+        & = \frac{7}{2} \left\lceil \frac{n}{5} \right\rceil + 2
+          \leq \frac{7 n}{10} + 6
+\end{align*}$$
+
+elements smaller than the pivot, or approximately 70% of the list.  The same upper bound applies the the number of elements in the list larger than the pivot.  It is this guarantee that the partitions cannot be too lopsided that leads to linear run time.
+
+Since step 3 of the divide-and-conquer strategy involves recursion on a list of size $\lceil \frac{n}{5} \rceil$, the run time $T$ of this algorithm satisfies the following recurrence inequality.
+
+$$T(n) \leq T\left(\left\lceil \frac{n}{5} \right\rceil\right) + T\left(\frac{7 n}{10} + 6\right) + O(n)$$
+
+The final $O(n)$ term comes from partitioning the list.  It can be shown [inductively](http://en.wikipedia.org/wiki/Mathematical_induction) that this inequality implies linear run time for the median-of-medians algorithm.  (Again, for details, consult [CLRS](http://mitpress.mit.edu/books/introduction-algorithms).)
+
+An interesting application of the median-of-median algorithms is [balanced quicksort](http://xlinux.nist.gov/dads//HTML/balancedqsrt.html), which uses the algorithm to pick a good pivot, resulting in worst-case $O(n \log n)$ run time.
+
+Discussion on [Hacker News](https://news.ycombinator.com/item?id=6628474)
+
+<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

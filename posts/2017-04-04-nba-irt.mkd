@@ -20,7 +20,7 @@ background: #eee;
 }
 </style>
 
-(**Author's note**: many thanks to Robert ([\@atlhawksfanatic](https://twitter.com/atlhawksfanatic) on Twitter) for pointing out [some](https://twitter.com/atlhawksfanatic/status/849685639796850689) [subtleties](https://twitter.com/atlhawksfanatic/status/849686015753302021) in the data set that I had missed.  This post has been revised in line with his feedback.  Robert has a very interesting [post](http://www.peachtreehoops.com/2017/2/17/14638288/nba-last-two-minute-reports-changing) about how last two minute refereeing has changed over the last three years; I highly recommend you read it.)
+(**Author's note**: many thanks to Robert ([@atlhawksfanatic](https://twitter.com/atlhawksfanatic) on Twitter) for pointing out [some](https://twitter.com/atlhawksfanatic/status/849685639796850689) [subtleties](https://twitter.com/atlhawksfanatic/status/849686015753302021) in the data set that I had missed.  This post has been revised in line with his feedback.  Robert has a very interesting [post](http://www.peachtreehoops.com/2017/2/17/14638288/nba-last-two-minute-reports-changing) about how last two minute refereeing has changed over the last three years; I highly recommend you read it.)
 
 I recently found a very interesting [data set](https://github.com/polygraph-cool/last-two-minute-report) derived from the NBA's [Last Two Minute Report](http://official.nba.com/nba-last-two-minute-reports-archive/) by [Russell Goldenberg](http://russellgoldenberg.com/) of [The Pudding](https://pudding.cool/).  Since 2015, the NBA has released a report reviewing every call and non-call in the final two minutes of every NBA game where the teams were separated by five points or less with two minutes remaining.  This data set has extracted each play from the NBA-distributed PDF and augmented it with information from [Basketball Reference](https://basketball-reference.com/) to produce a convenient CSV.  The Pudding has published two [very](https://pudding.cool/2017/02/two-minute-report/) [interesting](https://pudding.cool/2017/03/home-court/) visual essays using this data that you should definitely explore.
 
@@ -91,9 +91,9 @@ raw_df.head()
 
 
 
-<center>
+
 <div>
-<table border="1" class="dataframe">
+<center><table border="1" class="dataframe">
 <thead>
 <tr style="text-align: right;">
 <th></th>
@@ -152,9 +152,8 @@ raw_df.head()
 <td>POR</td>
 </tr>
 </tbody>
-</table>
+</table></center>
 </div>
-</center>
 
 <br />
 
@@ -240,9 +239,9 @@ long_df.head()
 
 
 
-<center>
+
 <div>
-<table border="1" class="dataframe">
+<center><table border="1" class="dataframe">
 <thead>
 <tr style="text-align: right;">
 <th></th>
@@ -313,9 +312,8 @@ long_df.head()
 <td>4</td>
 </tr>
 </tbody>
-</table>
+</table></center>
 </div>
-</center>
 
 <br />
 
@@ -345,9 +343,9 @@ df.head()
 
 
 
-<center>
+
 <div>
-<table border="1" class="dataframe">
+<center><table border="1" class="dataframe">
 <thead>
 <tr style="text-align: right;">
 <th></th>
@@ -394,9 +392,8 @@ df.head()
 <td>1</td>
 </tr>
 </tbody>
-</table>
+</table></center>
 </div>
-</center>
 
 <br />
 
@@ -439,9 +436,9 @@ salary_df.head()
 
 
 
-<center>
+
 <div>
-<table border="1" class="dataframe">
+<center><table border="1" class="dataframe">
 <thead>
 <tr style="text-align: right;">
 <th></th>
@@ -495,11 +492,10 @@ salary_df.head()
 <td>0.371293</td>
 </tr>
 </tbody>
-</table>
+</table></center>
 </div>
-</center>
 
-<br/>
+<br />
 
 We also produce a dataframe associating players to teams, along with some useful per-player summaries.
 
@@ -530,9 +526,9 @@ team_player_map.head()
 
 
 
-<center>
+
 <div>
-<table border="1" class="dataframe">
+<center><table border="1" class="dataframe">
 <thead>
 <tr style="text-align: right;">
 <th></th>
@@ -585,9 +581,8 @@ team_player_map.head()
 <td>Kent Bazemore</td>
 </tr>
 </tbody>
-</table>
+</table></center>
 </div>
-</center>
 
 <br />
 
@@ -641,7 +636,7 @@ We now sample from the beta-Bernoulli model.
 ```python
 def sample(model, n_tune, n_samples, seed):
     with model:
-        full_trace = pm.sample(n_tune + n_samples, random_seed=seed)
+        full_trace = pm.sample(n_tune + n_samples, tune=n_tune, random_seed=seed)
         
     return full_trace[n_tune:]
 ```
@@ -653,10 +648,10 @@ bb_trace = sample(bb_model, N_TUNE, N_SAMPLES, SEED)
 
     Auto-assigning NUTS sampler...
     Initializing NUTS using advi...
-      2%|▏         | 4890/200000 [00:02<02:09, 1508.62it/s]Median ELBO converged.
+      2%|▏         | 4793/200000 [00:02<01:47, 1818.84it/s]Median ELBO converged.
     Finished [100%]: Average ELBO = -3,554.3
     
-    100%|██████████| 4000/4000 [01:25<00:00, 34.83it/s]
+    100%|██████████| 4000/4000 [01:03<00:00, 63.38it/s]
 
 
 We use energy energy plots to diagnose possible problems with our samples.
@@ -693,7 +688,7 @@ energy_plot(bb_trace)
 
 Since the energy and energy difference distributions are quite similar, there is no indication from this plot of sampling issues.  For an in-depth treatment of Hamiltonian Monte Carlo algorithms and convergence diagnostics, consult [Michael Betancourt](https://betanalpha.github.io/)'s excellent paper [_A Conceptual Introduction to Hamiltonian Monte Carlo_](https://arxiv.org/abs/1701.02434).
 
-We will use the [widely applicable information criterion](http://www.stat.columbia.edu/~gelman/research/unpublished/loo_stan.pdf) (WAIC) and binned residuals to check and compare our models.  WAIC is a Bayesian measure of out-of-sample predictive accuracy based on in-sample data that is quite closely related to [leave-one-out cross-validation](https://en.wikipedia.org/wiki/Cross-validation_(statistics)#Leave-one-out_cross-validation).  It attempts to improve upon known shortcomings of the widely-used [deviance information criterion](https://en.wikipedia.org/wiki/Deviance_information_criterion).  (See [_Understanding predictive information criteria for Bayesian models_](http://www.stat.columbia.edu/~gelman/research/published/waic_understand3.pdf) for a review and comparison of various information criteria, including DIC and WAIC.)  WAIC is easy to calculate with `pymc3`.
+We will use the [widely applicable information criterion](http://www.stat.columbia.edu/~gelman/research/unpublished/loo_stan.pdf) (WAIC) and binned residuals to check and compare our models.  WAIC is a Bayesian measure of out-of-sample predictive accuracy based on in-sample data that is quite closely related to [leave-one-out cross-validation](https://en.wikipedia.org/wiki/Cross-validation_(statistics%29#Leave-one-out_cross-validation).  It attempts to improve upon known shortcomings of the widely-used [deviance information criterion](https://en.wikipedia.org/wiki/Deviance_information_criterion).  (See [_Understanding predictive information criteria for Bayesian models_](http://www.stat.columbia.edu/~gelman/research/published/waic_understand3.pdf) for a review and comparison of various information criteria, including DIC and WAIC.)  WAIC is easy to calculate with `pymc3`.
 
 
 ```python
@@ -725,9 +720,9 @@ waic_df
 
 
 
-<center>
+
 <div>
-<table border="1" class="dataframe">
+<center><table border="1" class="dataframe">
 <thead>
 <tr style="text-align: right;">
 <th></th>
@@ -739,14 +734,13 @@ waic_df
 <tbody>
 <tr>
 <th>Beta-Bernoulli</th>
-<td>6021.441722</td>
-<td>66.302246</td>
-<td>238.505387</td>
+<td>6021.491064</td>
+<td>66.23822</td>
+<td>238.488377</td>
 </tr>
 </tbody>
-</table>
+</table></center>
 </div>
-</center>
 
 <br />
 
@@ -967,10 +961,10 @@ ln_trace = sample(ln_model, N_TUNE, N_SAMPLES, SEED)
 
     Auto-assigning NUTS sampler...
     Initializing NUTS using advi...
-      8%|▊         | 16985/200000 [00:13<02:23, 1273.77it/s]Median ELBO converged.
+      9%|▊         | 17001/200000 [00:12<02:13, 1372.87it/s]Median ELBO converged.
     Finished [100%]: Average ELBO = -3,520.3
     
-    100%|██████████| 4000/4000 [04:12<00:00, 15.82it/s]
+    100%|██████████| 4000/4000 [02:27<00:00, 65.27it/s]
 
 
 The energy plot for this model gives no cause for concern.
@@ -1226,10 +1220,10 @@ rasch_trace = sample(rasch_model, N_TUNE, N_SAMPLES, SEED)
 
     Auto-assigning NUTS sampler...
     Initializing NUTS using advi...
-    Average ELBO = -3,729.5:  11%|█▏        | 22625/200000 [00:21<02:44, 1079.84it/s]Median ELBO converged.
+    Average ELBO = -3,729.5:  11%|█▏        | 22583/200000 [00:19<02:33, 1156.17it/s]Median ELBO converged.
     Finished [100%]: Average ELBO = -3,037.1
     
-    100%|██████████| 4000/4000 [02:29<00:00, 26.74it/s]
+    100%|██████████| 4000/4000 [02:01<00:00, 32.81it/s]
 
 
 Again, the energy plot for this model gives no cause for concern.
@@ -1470,7 +1464,7 @@ top_10_plot(rasch_df, μ_θ=μ_θ_mean)
 <center>![png](/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_98_0.png)</center>
 
 
-We focus first on $\theta_i$.  Interestingly, the top-ten players for the Rasch model contains many more top-tier stars than the logistic-normal model, including John Wall, Russell Westbrook, LeBron James, and Dwight Howard.  Turning to $b$, it is interesting that the while the top and bottom ten players contain many recognizable names (LaMarcus Aldridge, Harrison Barnes, Kawhi Leonard, and Ricky Rubio) the only truly top-tier player present is Anthony Davis.
+We focus first on $\theta_i$.  Interestingly, the top-ten players for the Rasch model contains many more top-tier stars than the logistic-normal model, including John Wall, Russell Westbrook, and LeBron James.  Turning to $b$, it is interesting that the while the top and bottom ten players contain many recognizable names (LaMarcus Aldridge, Harrison Barnes, Kawhi Leonard, and Ricky Rubio) the only truly top-tier player present is Anthony Davis.
 
 ### Time remaining model
 
@@ -1558,10 +1552,10 @@ time_trace = sample(time_model, N_TUNE, N_SAMPLES, SEED)
 
     Auto-assigning NUTS sampler...
     Initializing NUTS using advi...
-    Average ELBO = -1.0533e+05:  15%|█▌        | 30331/200000 [00:32<02:52, 985.58it/s] Median ELBO converged.
+    Average ELBO = -1.0533e+05:  15%|█▌        | 30300/200000 [00:31<02:52, 982.03it/s] Median ELBO converged.
     Finished [100%]: Average ELBO = -3,104.5
     
-    100%|██████████| 4000/4000 [04:06<00:00, 16.24it/s]
+    100%|██████████| 4000/4000 [03:10<00:00, 20.99it/s]
 
 
 The energy plot for this model is worse than the previous ones, but not too bad.
@@ -1631,7 +1625,7 @@ top_10_plot(time_df)
 <center>![png](/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_117_0.png)</center>
 
 
-Basketball fans may find it amusing that under this model, Ricky Rubio is no longer the worst player in terms of $b$.
+Basketball fans may find it amusing that under this model, Dwight Howard has joined the top-ten in terms of $\theta$ and Ricky Rubio is no longer the worst player in terms of $b$.
 
 While this model has not done much to change the rank-ordering of the most- and least-skilled players, it does enable us to plot per-player foul probabilities over time, as below.
 
@@ -1817,10 +1811,10 @@ salary_trace = sample(salary_model, N_TUNE, N_SAMPLES, SEED)
 
     Auto-assigning NUTS sampler...
     Initializing NUTS using advi...
-    Average ELBO = -1.0244e+05:  15%|█▌        | 30947/200000 [00:31<02:52, 981.37it/s] Median ELBO converged.
+    Average ELBO = -1.0244e+05:  15%|█▌        | 30998/200000 [00:32<02:57, 952.52it/s]Median ELBO converged.
     Finished [100%]: Average ELBO = -2,995.3
     
-    100%|██████████| 4000/4000 [04:44<00:00,  6.87it/s]
+    100%|██████████| 4000/4000 [03:45<00:00, 17.76it/s]
 
 
 The energy plot for this model looks a bit worse than that for the time remaining model.

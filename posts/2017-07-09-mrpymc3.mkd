@@ -1,5 +1,5 @@
 ---
-title: MRPyMC3 &mdash; Multilevel Regression and Poststratification with PyMC3
+title: MRPyMC3 - Multilevel Regression and Poststratification with PyMC3
 tags: PyMC3, Bayesian Statistics
 ---
 

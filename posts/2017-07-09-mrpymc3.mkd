@@ -32,7 +32,7 @@ MRP was developed to estimate American state-level opinions from national polls.
 
 Of course, as YouGov demonstrates, MRP is more widely applicable than estimation of state-level opinion.
 
-In this post, we will follow Kastellec's example of estimating state-level opinion about gay marriage in 2005/2006 using a combination of three national polls.  We begin by loading a data set that consists of repsonses to the three national polls.
+In this post, we will follow Kastellec's example of estimating state-level opinion about gay marriage in 2005/2006 using a combination of three national polls.  We begin by loading a data set that consists of responses to the three national polls.
 
 
 ```python

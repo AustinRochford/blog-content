@@ -1,0 +1,1255 @@
+---
+title: Quantifying Three Years of Reading
+tags: Bayesian Statistics, PyMC3, Books, Personal
+---
+
+<style>
+.dataframe * {border-color: #c0c0c0 !important;}
+.dataframe th{background: #eee;}
+.dataframe td{
+    background: #fff;
+    text-align: right; 
+    min-width:5em;
+}
+
+/* Format summary rows */
+.dataframe-summary-row tr:last-child,
+.dataframe-summary-col td:last-child{
+background: #eee;
+    font-weight: 500;
+}
+</style>
+
+Since December 2014, I have [tracked](https://cdn.knightlab.com/libs/timeline3/latest/embed/index.html?source=1wNbJv1Zf4Oichj3-dEQXE_lXVCwuYQjaoyU1gGQQqk4&font=Default&lang=en&start_at_end=true&initial_zoom=2&height=650) the books I read in a Google spreadsheet.  It recently occurred to me to use this data to quantify how my reading habits have changed over time.  This post will use [PyMC3](https://github.com/pymc-devs/pymc3) to model my reading habits.
+
+
+```python
+%matplotlib inline
+```
+
+
+```python
+from itertools import product
+```
+
+
+```python
+from matplotlib import dates as mdates
+from matplotlib import pyplot as plt
+import numpy as np
+import pandas as pd
+import pymc3 as pm
+import scipy as sp
+import seaborn as sns
+from theano import shared, tensor as tt
+```
+
+
+```python
+sns.set()
+```
+
+
+```python
+SEED = 27432 # from random.org, for reproductibility
+```
+
+First we load the data from the Google Spreadsheet.  Conveniently, [`pandas`](https://github.com/pymc-devs/pymc3/pull/2766) can load CSVs from a web link.
+
+
+```python
+GDOC_URI = 'https://docs.google.com/spreadsheets/d/1wNbJv1Zf4Oichj3-dEQXE_lXVCwuYQjaoyU1gGQQqk4/export?gid=0&format=csv'
+```
+
+
+```python
+raw_df = (pd.read_csv(
+                GDOC_URI,
+                usecols=[
+                    'Year', 'Month', 'Day',
+                    'End Year', 'End Month', 'End Day',
+                    'Headline', 'Text'
+                ]
+            )
+            .dropna(axis=1, how='all')
+            .dropna(axis=0))
+```
+
+
+```python
+raw_df.head()
+```
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>Year</th>
+<th>Month</th>
+<th>Day</th>
+<th>End Year</th>
+<th>End Month</th>
+<th>End Day</th>
+<th>Headline</th>
+<th>Text</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>0</th>
+<td>2014</td>
+<td>12</td>
+<td>13</td>
+<td>2014.0</td>
+<td>12.0</td>
+<td>23.0</td>
+<td>The Bloody Chamber</td>
+<td>Angela Carter, 126 pages</td>
+</tr>
+<tr>
+<th>1</th>
+<td>2014</td>
+<td>12</td>
+<td>23</td>
+<td>2015.0</td>
+<td>1.0</td>
+<td>4.0</td>
+<td>The Last Place on Earth</td>
+<td>Roland Huntford, 564 pages</td>
+</tr>
+<tr>
+<th>2</th>
+<td>2015</td>
+<td>1</td>
+<td>24</td>
+<td>2015.0</td>
+<td>2.0</td>
+<td>13.0</td>
+<td>Empire Falls</td>
+<td>Richard Russo, 483 pages</td>
+</tr>
+<tr>
+<th>3</th>
+<td>2015</td>
+<td>2</td>
+<td>14</td>
+<td>2015.0</td>
+<td>2.0</td>
+<td>20.0</td>
+<td>Wonder Boys</td>
+<td>Michael Chabon, 368 pages</td>
+</tr>
+<tr>
+<th>4</th>
+<td>2015</td>
+<td>2</td>
+<td>25</td>
+<td>2015.0</td>
+<td>3.0</td>
+<td>4.0</td>
+<td>Red State, Blue State, Rich State, Poor State:...</td>
+<td>Andrew Gelman, 196 pages</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+
+
+
+
+```python
+raw_df.tail()
+```
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>Year</th>
+<th>Month</th>
+<th>Day</th>
+<th>End Year</th>
+<th>End Month</th>
+<th>End Day</th>
+<th>Headline</th>
+<th>Text</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>58</th>
+<td>2017</td>
+<td>9</td>
+<td>16</td>
+<td>2017.0</td>
+<td>10.0</td>
+<td>14.0</td>
+<td>Civilization of the Middle Ages</td>
+<td>Norman F. Cantor, 566 pages</td>
+</tr>
+<tr>
+<th>59</th>
+<td>2017</td>
+<td>10</td>
+<td>14</td>
+<td>2017.0</td>
+<td>10.0</td>
+<td>16.0</td>
+<td>The Bloody Chamber</td>
+<td>Angela Carter, 126 pages</td>
+</tr>
+<tr>
+<th>60</th>
+<td>2017</td>
+<td>10</td>
+<td>16</td>
+<td>2017.0</td>
+<td>10.0</td>
+<td>27.0</td>
+<td>Big Data Baseball</td>
+<td>Travis Sawchik, 233 pages</td>
+</tr>
+<tr>
+<th>61</th>
+<td>2017</td>
+<td>10</td>
+<td>27</td>
+<td>2017.0</td>
+<td>12.0</td>
+<td>7.0</td>
+<td>The History of Statistics: The Measurement of ...</td>
+<td>Stephen M. Stigler, 361 pages</td>
+</tr>
+<tr>
+<th>62</th>
+<td>2017</td>
+<td>12</td>
+<td>8</td>
+<td>2017.0</td>
+<td>12.0</td>
+<td>21.0</td>
+<td>An Arsonist's Guide to Writers' Homes in New E...</td>
+<td>Brock Clarke, 303 pages</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+
+
+The spreadhseet is formatted for use with [Knight Lab's](https://knightlab.northwestern.edu/) [TimelineJS](https://timeline.knightlab.com/) package.  We transform the data to a more useful format for our analysis.
+
+
+```python
+df = pd.DataFrame({
+    'start_date': raw_df.apply(
+        lambda s: pd.datetime(
+            s['Year'],
+            s['Month'],
+            s['Day']
+        ),
+        axis=1
+    ),
+    'end_date': raw_df.apply(
+        lambda s: pd.datetime(
+            int(s['End Year']),
+            int(s['End Month']),
+            int(s['End Day'])
+        ),
+        axis=1
+    ),
+    'title': raw_df['Headline'],
+    'author': (raw_df['Text']
+                     .str.extract('(.*),.*', expand=True)
+                     .iloc[:, 0]),
+    'pages': (raw_df['Text']
+                    .str.extract(r'.*, (\d+) pages', expand=False)
+                    .astype(np.int64))
+})
+
+df['days'] = (df['end_date']
+                .sub(df['start_date'])
+                .dt.days)
+```
+
+Each row of the dataframe corresponds to a book I have read, and the columns are
+
+* `author`, the book's author,
+* `end_date`, the date I finished reading the book,
+* `pages`, the number of pages in the book,
+* `start_date`, the date I started reading the book,
+* `title`, the book's title, and
+* `days`, then number of days it took me to read the book.
+
+
+```python
+df.head()
+```
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>author</th>
+<th>end_date</th>
+<th>pages</th>
+<th>start_date</th>
+<th>title</th>
+<th>days</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>0</th>
+<td>Angela Carter</td>
+<td>2014-12-23</td>
+<td>126</td>
+<td>2014-12-13</td>
+<td>The Bloody Chamber</td>
+<td>10</td>
+</tr>
+<tr>
+<th>1</th>
+<td>Roland Huntford</td>
+<td>2015-01-04</td>
+<td>564</td>
+<td>2014-12-23</td>
+<td>The Last Place on Earth</td>
+<td>12</td>
+</tr>
+<tr>
+<th>2</th>
+<td>Richard Russo</td>
+<td>2015-02-13</td>
+<td>483</td>
+<td>2015-01-24</td>
+<td>Empire Falls</td>
+<td>20</td>
+</tr>
+<tr>
+<th>3</th>
+<td>Michael Chabon</td>
+<td>2015-02-20</td>
+<td>368</td>
+<td>2015-02-14</td>
+<td>Wonder Boys</td>
+<td>6</td>
+</tr>
+<tr>
+<th>4</th>
+<td>Andrew Gelman</td>
+<td>2015-03-04</td>
+<td>196</td>
+<td>2015-02-25</td>
+<td>Red State, Blue State, Rich State, Poor State:...</td>
+<td>7</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+
+
+
+```python
+df.tail()
+```
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style> <table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>author</th>
+<th>end_date</th>
+<th>pages</th>
+<th>start_date</th>
+<th>title</th>
+<th>days</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>58</th>
+<td>Norman F. Cantor</td>
+<td>2017-10-14</td>
+<td>566</td>
+<td>2017-09-16</td>
+<td>Civilization of the Middle Ages</td>
+<td>28</td>
+</tr>
+<tr>
+<th>59</th>
+<td>Angela Carter</td>
+<td>2017-10-16</td>
+<td>126</td>
+<td>2017-10-14</td>
+<td>The Bloody Chamber</td>
+<td>2</td>
+</tr>
+<tr>
+<th>60</th>
+<td>Travis Sawchik</td>
+<td>2017-10-27</td>
+<td>233</td>
+<td>2017-10-16</td>
+<td>Big Data Baseball</td>
+<td>11</td>
+</tr>
+<tr>
+<th>61</th>
+<td>Stephen M. Stigler</td>
+<td>2017-12-07</td>
+<td>361</td>
+<td>2017-10-27</td>
+<td>The History of Statistics: The Measurement of ...</td>
+<td>41</td>
+</tr>
+<tr>
+<th>62</th>
+<td>Brock Clarke</td>
+<td>2017-12-21</td>
+<td>303</td>
+<td>2017-12-08</td>
+<td>An Arsonist's Guide to Writers' Homes in New E...</td>
+<td>13</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+
+
+## Modeling
+
+We will model the number of days it takes me to read a book using count regression models based on the number of pages.
+
+### Negative binomial regression
+
+While [Poisson regression](https://en.wikipedia.org/wiki/Poisson_regression) is perhaps the simplest count regression model, we see that these data are fairly [overdispersed](https://en.wikipedia.org/wiki/Index_of_dispersion)
+
+
+```python
+df['days'].var() / df['days'].mean()
+```
+
+
+
+
+```
+14.466643655077199
+```
+
+
+
+so [negative binomial regression](http://www.karlin.mff.cuni.cz/~pesta/NMFM404/NB.html) is more appropriate.  We further verify that negative binomial regression is appropriate by plotting the logarithm of the number of pages versus the logarithm of the number of days it took me to read the book, since the logarithm is the [link function](https://en.wikipedia.org/wiki/Generalized_linear_model#Link_function) for the negative binomial GLM.
+
+
+```python
+fig, ax = plt.subplots(figsize=(8, 6))
+
+df.plot(
+    'pages', 'days',
+    s=40, kind='scatter',
+    ax=ax
+);
+
+ax.set_xscale('log');
+ax.set_xlabel("Number of pages");
+
+ax.set_yscale('log');
+ax.set_ylim(top=1.1e2);
+ax.set_ylabel("Number of days to read");
+```
+
+
+<center>![png](/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_22_0.png)</center>
+
+
+This approximately linear relationship confirms the suitability of a negative binomial model.
+
+Now we introduce some notation.  Let $y_i$ be the number of days it took me to read the $i$-th book and $x^{\textrm{pages}}_i$ be the (standardized) logarithm of the number of pages in the $i$-th book.  Our first model is
+
+$$
+\begin{align*}
+    \beta^0, \beta^{\textrm{pages}}
+        & \sim N(0, 5^2) \\
+    \theta_i
+        & \sim \beta^0 + \beta^{\textrm{pages}} \cdot x^{\textrm{pages}}_i \\
+    \mu_i
+        & = \exp({\theta_i}) \\
+    \alpha
+        & \sim \operatorname{Lognormal}(0, 5^2) \\
+    y_i - 1
+        & \sim \operatorname{NegativeBinomial}(\mu_i, \alpha).
+\end{align*}
+$$
+
+This model is expressed in PyMC3 below.
+
+
+```python
+days = df['days'].values
+
+log_pages = (df['pages']
+               .apply(np.log)
+               .values)
+log_pages_std = (log_pages - log_pages.mean()) / log_pages.std()
+```
+
+
+```python
+with pm.Model() as nb_model:
+    β0 = pm.Normal('β0', 0., 5.)
+    β_pages = pm.Normal('β_pages', 0., 5.)
+    
+    θ = β0 + β_pages * log_pages_std
+    μ = tt.exp(θ)
+    
+    α = pm.Lognormal('α', 0., 5.)
+    
+    days_obs = pm.NegativeBinomial('days_obs', μ, α, observed=days - 1)
+```
+
+We now sample from the model's posterior distribution.
+
+
+```python
+NJOBS = 3
+SAMPLE_KWARGS = {
+    'njobs': NJOBS,
+    'random_seed': [SEED + i for i in range(NJOBS)]
+}
+```
+
+
+```python
+with nb_model:
+    nb_trace = pm.sample(**SAMPLE_KWARGS)
+```
+
+    Auto-assigning NUTS sampler...
+    Initializing NUTS using jitter+adapt_diag...
+    Multiprocess sampling (3 chains in 3 jobs)
+    NUTS: [α_log__, β_pages, β0]
+    100%|██████████| 1000/1000 [00:02<00:00, 411.73it/s]
+
+
+We check a few convergence diagnostics.  The BFMI and energy distributions for our samples show no cause for concern.
+
+
+```python
+ax = pm.energyplot(nb_trace)
+
+bfmi = pm.bfmi(nb_trace)
+ax.set_title(f"BFMI = {bfmi:.2f}");
+```
+
+
+<center>![png](/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_30_0.png)</center>
+
+
+The Gelman-Rubin statistics indicate that the chains have converged.
+
+
+```python
+max(np.max(gr_stats) for gr_stats in pm.gelman_rubin(nb_trace).values())
+```
+
+
+
+
+```
+0.99991205729390331
+```
+
+
+
+We now sample from the model's posterior predictive distribution in order to examine its residuals.
+
+
+```python
+with nb_model:
+    pp_nb_trace = pm.sample_ppc(nb_trace)
+    
+pp_nb_days = pp_nb_trace['days_obs'].mean(axis=0)
+```
+
+    100%|██████████| 500/500 [00:00<00:00, 845.98it/s]
+
+
+Since the mean and variance of the negative binomial distribution are [related](https://en.wikipedia.org/wiki/Negative_binomial_distribution), we use standardized residuals to untangle this relationship.
+
+
+```python
+nb_std_resid = (days - pp_nb_days) / pp_nb_trace['days_obs'].std(axis=0)
+```
+
+We visualize these standardized residuals below.
+
+
+```python
+fig, ax = plt.subplots(figsize=(8, 6))
+
+ax.scatter(pp_nb_days, nb_std_resid);
+
+ax.hlines(
+    sp.stats.norm.isf([0.975, 0.025]),
+    0, 75,
+    linestyles='--', label="95% confidence band"
+);
+
+ax.set_xlim(0, 75);
+ax.set_xlabel("Predicted number of days to read");
+
+ax.set_ylabel("Standardized residual");
+
+ax.legend(loc=1);
+```
+
+
+<center>![png](/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_38_0.png)</center>
+
+
+If the model is correct, approximately 95% of the residuals should lie between the dotted horizontal lines, and indeed most residuals are in this band.
+
+We also plot the standardized residuals against the number of pages in the book, and notice no troubling patterns.
+
+
+```python
+fig, ax = plt.subplots(figsize=(8, 6))
+
+ax.scatter(df['pages'], nb_std_resid);
+
+ax.hlines(
+    sp.stats.norm.isf([0.975, 0.025]),
+    0, 900,
+    linestyles='--', label="95% confidence band"
+);
+
+ax.set_xlim(0, 900);
+ax.set_xlabel("Number of pages");
+
+ax.set_ylabel("Standardized residual");
+
+ax.legend(loc=1);
+```
+
+
+<center>![png](/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_40_0.png)</center>
+
+
+### Book effects
+
+One advantage to working with such a personal data set is that I can explain the factors that led to certain outliers.  Below we examine the four books that I read at the slowest average rate of pages per day.
+
+
+```python
+(df.assign(pages_per_day=df['pages'] / df['days'])
+   .nsmallest(4, 'pages_per_day')
+   [['title', 'author', 'pages_per_day']])
+```
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>title</th>
+<th>author</th>
+<th>pages_per_day</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>41</th>
+<td>The Handmaid's Tale</td>
+<td>Margaret Atwood</td>
+<td>4.382353</td>
+</tr>
+<tr>
+<th>48</th>
+<td>The Shadow of the Torturer</td>
+<td>Gene Wolf</td>
+<td>7.046512</td>
+</tr>
+<tr>
+<th>24</th>
+<td>The Song of the Lark</td>
+<td>Willa Cather</td>
+<td>7.446429</td>
+</tr>
+<tr>
+<th>61</th>
+<td>The History of Statistics: The Measurement of ...</td>
+<td>Stephen M. Stigler</td>
+<td>8.804878</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+
+
+Several of these books make sense; I found [_The Shadow of the Torturer_](https://en.wikipedia.org/wiki/The_Shadow_of_the_Torturer) to be an unpleasant slog and [_The History of Statistics_](http://www.hup.harvard.edu/catalog.php?isbn=9780674403413) was quite technical and dense.  On the other hand, [_The Handmaid's Tale_](https://en.wikipedia.org/wiki/The_Handmaid%27s_Tale) and [_The Song of the Lark_](https://en.wikipedia.org/wiki/The_Song_of_the_Lark) were both quite enjoyable, but my time reading them coincided with other notable life events.  I was reading _The Handmaid's Tale_ when certain unfortunate American political developments distracted me for several weeks in November 2017, and I was reading _The Song of the Lark_ when a family member passed away in March 2016.
+
+We modify the negative binomial regression model to include special factors for _The Handmaid's Tale_ and _The Song of the Lark_, in order to mitigate the influence of these unusual circumstances on our parameter estimates.
+
+We let
+
+$$
+x^{\textrm{handmaid}}_i = \begin{cases}
+    1 & \textrm{if the } i\textrm{-th book is }\textit{The Handmaid's Tale} \\
+    0 & \textrm{if the } i\textrm{-th book is not }\textit{The Handmaid's Tale}
+\end{cases},
+$$
+
+and similarly for $x^{\textrm{lark}}_i$.  We add the terms
+
+$$
+\begin{align*}
+    \beta^{\textrm{handmaid}}, \beta^{\textrm{lark}}
+        & \sim N(0, 5^2) \\
+    \beta^{\textrm{book}}_i
+        & = \beta^{\textrm{handmaid}} \cdot x^{\textrm{handmaid}}_i + \beta^{\textrm{lark}} \cdot x^{\textrm{lark}}_i \\
+    \theta_i
+        & \sim \beta_0 + \beta^{\textrm{book}}_i + \beta^{\textrm{pages}} \cdot x^{\textrm{pages}}_i
+\end{align*}
+$$
+
+to the model below.
+
+
+```python
+is_lark = (df['title']
+             .eq("The Song of the Lark")
+             .mul(1.)
+             .values)
+is_handmaid = (df['title']
+                 .eq("The Handmaid's Tale")
+                 .mul(1.)
+                 .values)
+```
+
+
+```python
+with pm.Model() as book_model:
+    β0 = pm.Normal('β0', 0., 5.)
+    
+    β_lark = pm.Normal('β_lark', 0., 5.)
+    β_handmaid = pm.Normal('β_handmaid', 0., 5.)
+    β_book = β_lark * is_lark + β_handmaid * is_handmaid
+    
+    β_pages = pm.Normal('β_pages', 0., 5.)
+    
+    θ = β0 + β_book + β_pages * log_pages_std
+    μ = tt.exp(θ)
+    
+    α = pm.Lognormal('α', 0., 5.)
+    
+    days_obs = pm.NegativeBinomial('days_obs', μ, α, observed=days - 1)
+```
+
+We now sample from the model's posterior distribution.
+
+
+```python
+with book_model:
+    book_trace = pm.sample(**SAMPLE_KWARGS)
+```
+
+    Auto-assigning NUTS sampler...
+    Initializing NUTS using jitter+adapt_diag...
+    Multiprocess sampling (3 chains in 3 jobs)
+    NUTS: [α_log__, β_pages, β_handmaid, β_lark, β0]
+    100%|██████████| 1000/1000 [00:04<00:00, 201.28it/s]
+
+
+Again, the BFMI, energy plots and Gelman-Rubin statistics indicate convergence.
+
+
+```python
+ax = pm.energyplot(book_trace)
+
+bfmi = pm.bfmi(book_trace)
+ax.set_title(f"BFMI = {bfmi:.2f}");
+```
+
+
+<center>![png](/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_49_0.png)</center>
+
+
+
+```python
+max(np.max(gr_stats) for gr_stats in pm.gelman_rubin(book_trace).values())
+```
+
+
+
+
+```
+1.0000768795481669
+```
+
+
+
+We see that the special factors for _The Handmaid's Tale_ and _The Song of the Lark_ were indeed notable.
+
+
+```python
+pm.forestplot(
+    book_trace, varnames=['β_handmaid', 'β_lark'],
+    chain_spacing=0.025,
+    rhat=False
+);
+```
+
+
+<center>![png](/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_52_0.png)</center>
+
+
+Again, we sample from the model's posterior predictive distribution in order to calculate standardized residuals.
+
+
+```python
+with book_model:
+    pp_book_trace = pm.sample_ppc(book_trace)
+    
+pp_book_days = pp_book_trace['days_obs'].mean(axis=0)
+```
+
+    100%|██████████| 500/500 [00:00<00:00, 1075.21it/s]
+
+
+
+```python
+book_std_resid = (days - pp_book_days) / pp_book_trace['days_obs'].std(axis=0)
+```
+
+Both standardized residual plots show no cause for concern.
+
+
+```python
+fig, ax = plt.subplots(figsize=(8, 6))
+
+ax.scatter(pp_book_days, book_std_resid);
+
+ax.hlines(
+    sp.stats.norm.isf([0.975, 0.025]),
+    0, 120,
+    linestyles='--', label="95% confidence band"
+);
+
+ax.set_xlim(0, 120);
+ax.set_xlabel("Predicted number of days to read");
+
+ax.set_ylabel("Standardized residual");
+```
+
+
+<center>![png](/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_57_0.png)</center>
+
+
+
+```python
+fig, ax = plt.subplots(figsize=(8, 6))
+
+ax.scatter(df['pages'], book_std_resid);
+
+ax.hlines(
+    sp.stats.norm.isf([0.975, 0.025]),
+    0, 900,
+    linestyles='--', label="95% confidence band"
+);
+
+ax.set_xlim(0, 900);
+ax.set_xlabel("Number of pages");
+
+ax.set_ylabel("Standardized residual");
+```
+
+
+<center>![png](/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_58_0.png)</center>
+
+
+Since we now have two models, we use [WAIC](http://www.jmlr.org/papers/volume14/watanabe13a/watanabe13a.pdf) to compare them.
+
+
+```python
+compare_df = (pm.compare(
+                    [nb_trace, book_trace],
+                    [nb_model, book_model]
+                )
+                .rename(index={0: 'NB', 1: 'Book'}))
+```
+
+
+```python
+fig, ax = plt.subplots(figsize=(8, 6))
+
+pm.compareplot(
+    compare_df, 
+    insample_dev=False, dse=False,
+    ax=ax
+);
+
+ax.set_xlabel("WAIC");
+ax.set_ylabel("Model");
+```
+
+
+<center>![png](/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_61_0.png)</center>
+
+
+Since lower WAIC is better, we prefer the model with book effects, although not conclusively.
+
+### Timeseries model
+
+We now turn to the goal of this post, quantifying how my reading habits have changed over time.  For computational simplicity, we operate on a time scale of weeks.  Therefore, for each book, we calculate the number of weeks from the beginning of the observation period to when I started reading it.
+
+
+```python
+t_week = (df['start_date'] 
+            .sub(df['start_date'].min())
+            .dt.days
+            .floordiv(7)
+            .values)
+n_week = t_week.max() + 1
+```
+
+To facilitate posterior prediction, we wrap our predictors in [`theano.shared`](http://deeplearning.net/software/theano/library/compile/shared.html) variables.
+
+
+```python
+is_lark_ = shared(is_lark)
+is_handmaid_ = shared(is_handmaid)
+
+log_pages_std_ = shared(log_pages_std)
+t_week_ = shared(t_week)
+```
+
+We let the intercept $\beta^0$ and the (log standardized) pages coefficient $\beta^{\textrm{pages}}$ vary over time.  We give these time-varying coefficient Gaussian random walk priors,
+
+$$
+\begin{align*}
+    \beta^0_t \sim N(\beta^0_{t - 1}, 10^{-2}), \\
+    \beta^{\textrm{pages}}_t \sim N(\beta^{\textrm{pages}}_{t - 1}, 10^{-2}).
+\end{align*}
+$$
+
+The small drift scale of $10^{-1}$ is justified by the intuition that reading habits should change gradually.
+
+
+```python
+with pm.Model() as time_model:
+    β0 = pm.GaussianRandomWalk(
+        'β0', sd=0.1, shape=n_week
+    )
+    
+    β_lark = pm.Normal('β_lark', 0., 5.)
+    β_handmaid = pm.Normal('β_handmaid', 0., 5.)
+    β_book = β_lark * is_lark_ + β_handmaid * is_handmaid_
+    
+    β_pages = pm.GaussianRandomWalk(
+        'β_pages', sd=0.1, shape=n_week
+    )
+    
+    θ = β0[t_week_] + β_book + β_pages[t_week_] * log_pages_std_
+    μ = tt.exp(θ)
+    
+    α = pm.Lognormal('α', 0., 5.)
+    
+    days_obs = pm.NegativeBinomial('days_obs', μ, α, observed=days - 1)
+```
+
+Again, we sample from the model's posterior distribution.
+
+
+```python
+with time_model:
+    time_trace = pm.sample(**SAMPLE_KWARGS)
+```
+
+    Auto-assigning NUTS sampler...
+    Initializing NUTS using jitter+adapt_diag...
+    Multiprocess sampling (3 chains in 3 jobs)
+    NUTS: [α_log__, β_pages, β_handmaid, β_lark, β0]
+    100%|██████████| 1000/1000 [02:10<00:00,  7.65it/s]
+
+
+Again, the BFMI, energy plots, and Gelman-Rubin statistics indicate convergence.
+
+
+```python
+ax = pm.energyplot(time_trace)
+
+bfmi = pm.bfmi(time_trace)
+ax.set_title(f"BFMI = {bfmi:.2f}");
+```
+
+
+<center>![png](/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_72_0.png)</center>
+
+
+Once more, we sample from the model's posterior predictive distribution in order to calculate standardized residuals.
+
+
+```python
+with time_model:
+    pp_time_trace = pm.sample_ppc(time_trace)
+    
+pp_time_days = pp_time_trace['days_obs'].mean(axis=0)
+```
+
+    100%|██████████| 500/500 [00:00<00:00, 1334.21it/s]
+
+
+
+```python
+time_std_resid = (days - pp_time_days) / pp_time_trace['days_obs'].std(axis=0)
+```
+
+In general, the standardized residuals are now smaller and fewer are outside of the 95% confidence band.
+
+
+```python
+fig, ax = plt.subplots(figsize=(8, 6))
+
+ax.scatter(pp_time_days, time_std_resid);
+
+ax.hlines(
+    sp.stats.norm.isf([0.975, 0.025]),
+    0, 120,
+    linestyles='--', label="95% confidence band"
+);
+
+ax.set_xlim(0, 120);
+ax.set_xlabel("Predicted number of days to read");
+
+ax.set_ylabel("Standardized residual");
+
+ax.legend(loc=1);
+```
+
+
+<center>![png](/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_77_0.png)</center>
+
+
+
+```python
+fig, ax = plt.subplots(figsize=(8, 6))
+
+ax.scatter(df['pages'], time_std_resid);
+
+ax.hlines(
+    sp.stats.norm.isf([0.975, 0.025]),
+    0, 900,
+    linestyles='--', label="95% confidence band"
+);
+
+ax.set_xlim(0, 900);
+ax.set_xlabel("Number of pages");
+ax.set_ylabel("Standardized residual");
+
+ax.legend(loc=1);
+```
+
+
+<center>![png](/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_78_0.png)</center>
+
+
+Again, we use WAIC to compare the three models.
+
+
+```python
+compare_df = (pm.compare(
+                    [nb_trace, book_trace, time_trace],
+                    [nb_model, book_model, time_model]
+                )
+                .rename(index={0: 'NB', 1: 'Book', 2: 'Time'}))
+```
+
+
+```python
+fig, ax = plt.subplots(figsize=(8, 6))
+
+pm.compareplot(
+    compare_df, 
+    insample_dev=False, dse=False,
+    ax=ax
+);
+
+ax.set_xlabel("WAIC");
+ax.set_ylabel("Model");
+```
+
+
+<center>![png](/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_81_0.png)</center>
+
+
+The timeseries model performs marginally worse than the previous model.  We proceed since only the timeseries model answers our original question.
+
+We now use the timeseries model to show how the amount of time it takes me to read a book has changed over time, conditioned on the length of the book.
+
+
+```python
+t_grid = np.linspace(
+    mdates.date2num(df['start_date'].min()),
+    mdates.date2num(df['start_date'].max()),
+    n_week
+)
+```
+
+
+```python
+PP_PAGES = np.array([100, 200, 300, 400, 500])
+
+pp_df = (pd.DataFrame(
+                list(product(
+                    np.arange(n_week),
+                    PP_PAGES
+                )),
+                columns=['t_week', 'pages']
+           )
+           .assign(
+               is_handmaid=0,
+               is_lark=0,
+               log_pages_std=lambda df: (np.log(df['pages']) - log_pages.mean()) / log_pages.std()
+           ))
+```
+
+
+```python
+is_handmaid_.set_value(pp_df['is_handmaid'].values)
+is_lark_.set_value(pp_df['is_lark'].values)
+
+t_week_.set_value(pp_df['t_week'].values)
+log_pages_std_.set_value(pp_df['log_pages_std'].values)
+```
+
+
+```python
+with time_model:
+    pp_time_trace = pm.sample_ppc(time_trace, samples=10000)
+```
+
+    100%|██████████| 10000/10000 [00:07<00:00, 1304.51it/s]
+
+
+
+```python
+pp_df['pp_days'] = pp_time_trace['days_obs'].mean(axis=0)
+pp_df['t_plot'] = np.repeat(t_grid, 5)
+```
+
+
+```python
+fig, ax = plt.subplots(figsize=(8, 6))
+
+for grp_pages, grp_df in pp_df.groupby('pages'):
+    grp_df.plot(
+        't_plot', 'pp_days',
+        label=f"{grp_pages} pages",
+        ax=ax
+    );
+    
+ax.set_xlim(t_grid.min(), t_grid.max());
+ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %Y'));
+ax.xaxis.set_major_locator(mdates.MonthLocator(interval=6));
+ax.xaxis.label.set_visible(False);
+
+ax.set_ylabel("Predicted number of days to read");
+```
+
+
+<center>![png](/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_88_0.png)</center>
+
+
+The plot above exhibits a fascinating pattern; according to the timeseries model, I now read shorter books (fewer than approximately 300 pages) slightly faster than I did in 2015, but it takes me twice as long as before to read longer books.  The trend for longer books is easier to explain; in the last 12-18 months, I have been doing much more public speaking and blogging than before, which naturally takes time away from reading.  The trend for shorter books is a bit harder to explain, but upon some thought, I tend to read more purposefully as I approach the end of a book, looking forward to starting a new one.  This effect occurs much earlier in shorter books than in longer ones, so it is a plausible explanation for the trend in shorter books.
+
+This post is available as a Jupyter notebook [here](http://nbviewer.jupyter.org/gist/AustinRochford/722d4a98ba45f577b7e415e2b73cda0d).
+
+<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

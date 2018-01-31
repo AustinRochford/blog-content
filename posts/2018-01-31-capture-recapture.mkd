@@ -66,7 +66,7 @@ The idea of the Lincoln-Petersen model is to visit the observation site twice to
 
 The Lincoln-Petersen model assumes that:
 1. each individuals has an equal probability to be captured on both visits (regardless of whether or not they were marked),
-2. no marks fall off or become illedgible, and
+2. no marks fall off or become illegible, and
 3. the population is closed, that is, no individuals are born, die, enter, or leave the site between visits.
 
 The third assumption is quite restrictive, and will be relaxed in the two subsequent models.  The first two assumptions can be relaxed in various ways, but we will not do so in this post.  First we derive a simple analytic estimator for the total population size given $n_1$, $n_2$, and $n_{1, 2}$, then we fit a Bayesian Lincoln-Petersen model using PyMC3 to set the stage for the (Cormack-)Jolly-Seber models.

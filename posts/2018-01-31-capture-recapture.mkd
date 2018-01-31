@@ -892,8 +892,10 @@ pm.plot_posterior(
 
 
 Now that we have estimated these three models, we return briefly to the topic of $M$-arrays versus encounter histories.  While $M$-arrays are a convienent summary of encounter histories, they do not lend themselves to common extensions of these models to include individual random effects, trap-dependent recapture, etc. as readily as encounter histories.  Two possibile approaches to include such effects are:
+
 1. Use likelihoods for the (Cormack-)Jolly-Seber models based on encounter histories, which are a bit more complex than those based on $M$-arrays.
 2. Individual $M$-arrays: transform each individual's account history into an $M$-array an stack them into a three-dimensional array of $M$-arrays.
+
 We may explore one (or both) of these approaches in a future post.
 
 Thanks to [Eric Heydenberk](http://heydenberk.com/) for his feedback on a early draft of this post.

@@ -20,6 +20,8 @@ background: #eee;
 }
 </style>
 
+An improved version of this analysis is available [here](/posts/2018-02-04-nba-irt-2.html).
+
 (**Author's note**: many thanks to Robert ([@atlhawksfanatic](https://twitter.com/atlhawksfanatic) on Twitter) for pointing out [some](https://twitter.com/atlhawksfanatic/status/849685639796850689) [subtleties](https://twitter.com/atlhawksfanatic/status/849686015753302021) in the data set that I had missed.  This post has been revised in line with his feedback.  Robert has a very interesting [post](http://www.peachtreehoops.com/2017/2/17/14638288/nba-last-two-minute-reports-changing) about how last two minute refereeing has changed over the last three years; I highly recommend you read it.)
 
 I recently found a very interesting [data set](https://github.com/polygraph-cool/last-two-minute-report) derived from the NBA's [Last Two Minute Report](http://official.nba.com/nba-last-two-minute-reports-archive/) by [Russell Goldenberg](http://russellgoldenberg.com/) of [The Pudding](https://pudding.cool/).  Since 2015, the NBA has released a report reviewing every call and non-call in the final two minutes of every NBA game where the teams were separated by five points or less with two minutes remaining.  This data set has extracted each play from the NBA-distributed PDF and augmented it with information from [Basketball Reference](https://basketball-reference.com/) to produce a convenient CSV.  The Pudding has published two [very](https://pudding.cool/2017/02/two-minute-report/) [interesting](https://pudding.cool/2017/03/home-court/) visual essays using this data that you should definitely explore.

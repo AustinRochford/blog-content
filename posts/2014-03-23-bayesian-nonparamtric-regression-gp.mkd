@@ -176,4 +176,3 @@ Our implementation of Gaussian process regression is numerically unstable, as it
 
 This post is [available](/resources/bayesian-nonparametric-gp/notebook.ipynb) as an IPython notebook.
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

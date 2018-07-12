@@ -48,4 +48,3 @@ since the exponential function is continuous.  Now that we know that $P(T > t) =
 
 It is truly astounding that such a seemingly small assumption about the arrival time completely specifies its distribution.  The memorylessness of the exponential distribution is immensely important in the study of [queueing theory](http://en.wikipedia.org/wiki/Queueing_theory), as it implies that the homogeneous [Poisson process](http://en.wikipedia.org/wiki/Poisson_process) has [stationary increments](http://en.wikipedia.org/wiki/Stationary_increments#Stationary_increments).
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

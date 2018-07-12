@@ -602,4 +602,3 @@ This post has been a short introduction to implementing parametric survival regr
 
 This post is available as a Jupyter notebook [here](https://gist.github.com/AustinRochford/4b8a163b66a11cdcbc430797b9b664fe).
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

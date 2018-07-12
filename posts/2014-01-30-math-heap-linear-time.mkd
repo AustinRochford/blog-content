@@ -83,5 +83,4 @@ by the formula for summing a [geometric series](http://en.wikipedia.org/wiki/Geo
 
 Discussion on [Hacker News](https://news.ycombinator.com/item?id=7157009)
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>
 <script async src="//platform.twitter.com/widgets.js" charset="utf-8"></script>

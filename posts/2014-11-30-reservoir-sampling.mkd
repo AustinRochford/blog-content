@@ -161,4 +161,3 @@ integers than the simple reservoir algorithm given above.
 
 This blog post is available as an [IPython](http://ipython.org/) notebook [here](http://nbviewer.ipython.org/gist/AustinRochford/6be7cb4d9f38b9419f94).
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

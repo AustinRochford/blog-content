@@ -2487,4 +2487,3 @@ In the future it would be useful to include a correction for the probability tha
 
 This post is available as a Jupyter notebook [here](http://nbviewer.jupyter.org/gist/AustinRochford/a9df849f6a78188dbf9886b2a8a3644b).
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

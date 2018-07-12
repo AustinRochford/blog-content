@@ -378,4 +378,3 @@ We have only scratched the surface of additive models, fitting a simple model of
 
 This post is available as an [IPython](http://ipython.org/) notebook [here](http://nbviewer.ipython.org/gist/AustinRochford/c9c6862c6f7f7a28870a).
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

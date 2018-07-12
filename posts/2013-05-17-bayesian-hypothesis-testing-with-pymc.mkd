@@ -217,4 +217,3 @@ This value is quite close to one, so we have in fact approximated the critical p
 
 It's interesting to note that we have used PyMC in a somewhat odd way here, to approximate the marginal distribution of $X$ under the null hypothesis.  A much more typical use of PyMC and its Markov chain Monte Carlo would be to fix an observed value of $X$ and approximate the posterior distribution of $\mu$ given this observation.
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

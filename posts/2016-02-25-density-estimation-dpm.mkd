@@ -735,4 +735,3 @@ We have only scratched the surface in terms of applications of the Dirichlet pro
 
 This post is available as an <a href="http://ipython.org/">IPython</a> notebook <a href="https://nbviewer.jupyter.org/gist/AustinRochford/62c283a3f0fae90b5e39">here</a>.
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

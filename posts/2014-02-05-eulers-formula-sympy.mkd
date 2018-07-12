@@ -204,4 +204,3 @@ coincide, if we were so inclided.
 
 Discussion on [Hacker News](https://news.ycombinator.com/item?id=7186878)
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

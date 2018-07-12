@@ -203,4 +203,3 @@ Deriving this identity gives an excellent glimpse of the power of generating fun
 
 Discussion on [Hacker News](https://news.ycombinator.com/item?id=6660311)
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

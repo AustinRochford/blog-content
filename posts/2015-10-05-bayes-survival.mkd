@@ -570,4 +570,3 @@ We have really only scratched the surface of both survival analysis and the Baye
 
 This post is available as an [IPython](http://ipython.org/) notebook [here](https://gist.github.com/AustinRochford/afe6862e622c31494b2f).
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

@@ -180,4 +180,3 @@ When considering the properties of volume, we arrived at the question of whether
 
 The Banach-Tarski paradox is resolved by noting that as long as at least one of the slices of the original sphere does not have a volume, the notion of doubling its volume is meaningless.
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

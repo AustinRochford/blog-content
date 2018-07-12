@@ -288,4 +288,3 @@ This post is available as an [IPython](http://ipython.org/) notebook [here](/res
 
 Discussion on [Hacker News](https://news.ycombinator.com/item?id=6895540)
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

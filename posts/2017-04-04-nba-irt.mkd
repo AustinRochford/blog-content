@@ -1927,4 +1927,3 @@ In this post we have only scratched the surface of Bayesian item-response theory
 
 This is is available as a Jupyter notebook [here](https://gist.github.com/AustinRochford/d1eb474ad4802e1b9edc790c4a9d2e0d).
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

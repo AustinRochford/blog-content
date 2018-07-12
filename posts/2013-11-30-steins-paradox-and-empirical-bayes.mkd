@@ -172,4 +172,3 @@ We therefore see that the empirical Bayes method, combined with unbiased estimat
 
 To me, this derivation more clearly explains the phenomenon of shrinkage.  Bayes estimators may often be seen as a weighted sum of the prior information, in this case, that the mean was likely to be close to zero, and the evidence, the observed values of $X$.  In this context, it makes much more sense that an estimator which shrinks its estimate toward zero seem well-justified.
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

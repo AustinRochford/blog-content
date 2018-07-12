@@ -1615,4 +1615,3 @@ I am particularly eager to see what applications MRP will find outside of politi
 
 This post is available as a Jupyter notebook [here](https://gist.github.com/AustinRochford/bfc20cb3262169b41b730bd9faf74477).
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

@@ -52,4 +52,3 @@ An interesting application of the median-of-median algorithms is [balanced quick
 
 Discussion on [Hacker News](https://news.ycombinator.com/item?id=6628474)
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

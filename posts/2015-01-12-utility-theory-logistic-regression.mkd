@@ -137,4 +137,3 @@ The red simulated curve is reasonably close to the black actual curve.  (Increas
 
 Aside from being an important tool in econometrics, utility theory helps shed light on logistic regression.  The perspective it provides on logistic regression opens the door to generalization and related theories.  If the random portions of utility, $\varepsilon_1$ and $\varepsilon_0$ are normally distributed instead of Gumbel distributed, the utility model gives rise to [probit regression](http://en.wikipedia.org/wiki/Probit_model).  For a thorough introduction to utility/choice theory, consult the excellent book [_Discrete Choice Models with Simulation_](http://eml.berkeley.edu/books/choice2.html) by Kenneth Train, which is freely available online.
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

@@ -279,4 +279,3 @@ Again, this model is quite simple, but will be an important component of more co
 
 This post is available as an [IPython](http://ipython.org/) notebook [here](https://gist.github.com/AustinRochford/fa24221f09df20071c06).
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

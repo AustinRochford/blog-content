@@ -1427,4 +1427,3 @@ The plot above exhibits a fascinating pattern; according to the timeseries model
 
 This post is available as a Jupyter notebook [here](http://nbviewer.jupyter.org/gist/AustinRochford/722d4a98ba45f577b7e415e2b73cda0d).
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

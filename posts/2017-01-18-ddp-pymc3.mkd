@@ -1032,4 +1032,3 @@ To learn more about depdendent density regression and related models, consult [_
 
 This post is available as a Jupyter notebook [here](https://nbviewer.jupyter.org/gist/AustinRochford/0d6926e9953e8b8093a110863fc0487f).
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

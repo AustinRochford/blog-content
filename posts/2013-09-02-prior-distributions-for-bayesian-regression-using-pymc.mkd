@@ -476,4 +476,3 @@ This post is written as an [IPython](http://ipython.org/) notebook.  The
 notebook is [available](/resources/bayesian-priors/notebook.ipynb) under the [MIT
 License](http://opensource.org/licenses/MIT).
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

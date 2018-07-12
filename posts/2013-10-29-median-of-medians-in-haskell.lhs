@@ -61,4 +61,3 @@ testSelect = [1..100] == map (flip select (reverse [1..100])) [0..99]
 
 This post is available as a [literate Haskell file](/resources/medians/MedianOfMedians.lhs).
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

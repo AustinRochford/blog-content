@@ -902,4 +902,3 @@ Thanks to [Eric Heydenberk](http://heydenberk.com/) for his feedback on a early 
 
 This post is available as a Jupyter notebook [here](http://nbviewer.jupyter.org/gist/AustinRochford/e67cb0c628b3692ecc669190fe86990c).
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

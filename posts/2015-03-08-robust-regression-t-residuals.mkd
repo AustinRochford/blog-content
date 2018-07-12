@@ -205,4 +205,3 @@ On the data set without the outlier, the robust model has a significantly larger
 
 This post is available as an [IPython](http://ipython.org) notebook [here](http://nbviewer.ipython.org/gist/AustinRochford/50210506326e1cd73381).
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

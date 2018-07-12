@@ -118,4 +118,3 @@ If this post has piqued an interest in measure theory, there are many possible a
 
 Discussion on [Hacker News](https://news.ycombinator.com/item?id=6991341)
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

@@ -47,4 +47,3 @@ Discuss on <a href="https://news.ycombinator.com/item?id=6367378">Hacker News</a
 
 Many people have pointed out that this isn't a great problem for general developer interview, and I agree.  This interview was for a data-oriented position which required a strong understanding of probability theory.
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

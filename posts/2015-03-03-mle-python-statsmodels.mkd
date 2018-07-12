@@ -134,4 +134,3 @@ The next time you are fitting a model using maximum likelihood, try integrating 
 
 This post is available as an [IPython](http://ipython.org) notebook [here](http://nbviewer.ipython.org/gist/AustinRochford/92b06d174a7f84fded6e).
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

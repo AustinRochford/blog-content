@@ -49,4 +49,3 @@ What is most interesting here is that, when $p > 0.5$, $P(\textrm{Wins after deu
 
 We see now that for the better player, the probability of winning a game involving a deuce can be a fair bit larger than the probability of winning a single point.
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

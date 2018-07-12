@@ -1409,4 +1409,3 @@ Hopefully this introduction to the technique of summarizing data sets has proved
 
 This post is available as an [IPython](http://ipython.org/) notebook [here](http://nbviewer.ipython.org/gist/AustinRochford/53114977dc0697fc9985).
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>

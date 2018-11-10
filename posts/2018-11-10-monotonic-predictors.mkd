@@ -1,0 +1,727 @@
+---
+title: Monotonic Effects in PyMC3
+tags: PyMC3, Bayesian Statistics, Papers
+---
+
+<style>
+.dataframe * {border-color: #c0c0c0 !important;}
+.dataframe th{background: #eee;}
+.dataframe td{
+    background: #fff;
+    text-align: right; 
+    min-width:5em;
+}
+
+/* Format summary rows */
+.dataframe-summary-row tr:last-child,
+.dataframe-summary-col td:last-child{
+background: #eee;
+    font-weight: 500;
+}
+</style>
+
+Last week I came across the following tweet from [Paul Bürkner](https://www.uni-muenster.de/PsyIFP/AEHolling/de/personen/buerkner.html) about a paper he coauthored about including ordinal predictors in Bayesian regression models, and I thought the approach was very clever.
+
+<center>
+<blockquote class="twitter-tweet" data-lang="en"><p lang="en" dir="ltr">Have you ever wondered how to handle ordinal predictors in your regression models?  We propose a simple and intuitive method that is readily available via  <a href="https://twitter.com/hashtag/brms?src=hash&amp;ref_src=twsrc%5Etfw">#brms</a> and <a href="https://twitter.com/mcmc_stan?ref_src=twsrc%5Etfw">@mcmc_stan</a>: <a href="https://t.co/dKg4AphvsG">https://t.co/dKg4AphvsG</a></p>&mdash; Paul Bürkner (@paulbuerkner) <a href="https://twitter.com/paulbuerkner/status/1058394076863754240?ref_src=twsrc%5Etfw">November 2, 2018</a></blockquote>
+<script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script>
+</center>
+
+The code in the paper uses [`brms`](https://github.com/paul-buerkner/brms) and [Stan](http://mc-stan.org/) to illustrate these concepts.  In this post I'll be replicating some of the paper's analysis in Python and [PyMC3](https://docs.pymc.io/), mostly for my own edification.
+
+
+```python
+%matplotlib inline
+```
+
+
+```python
+from itertools import product
+```
+
+
+```python
+import arviz as az
+from matplotlib import pyplot as plt
+import numpy as np
+import pandas as pd
+import pymc3 as pm
+from rpy2.robjects import pandas2ri, r
+import seaborn as sns
+from theano import shared
+```
+
+
+```python
+sns.set()
+```
+
+The paper uses data from the [`ordPens`](https://cran.r-project.org/web/packages/ordPens/index.html) R package, which we download and load into a Pandas `DataFrame`.
+
+
+```python
+%%bash
+if [[ ! -e ~/data/ordPens ]];
+then
+    mkdir -p data
+    wget -q -O data/ordPens_0.3-1.tar.gz ~/data/ https://cran.r-project.org/src/contrib/ordPens_0.3-1.tar.gz
+    tar xzf data/ordPens_0.3-1.tar.gz -C data
+fi
+```
+
+
+```python
+!ls data/ordPens/data/
+```
+
+    ICFCoreSetCWP.RData
+
+
+
+```python
+pandas2ri.activate()
+
+r.load('data/ordPens/data/ICFCoreSetCWP.RData');
+all_df = r['ICFCoreSetCWP']
+```
+
+
+```python
+all_df.head()
+```
+
+
+
+
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>b1602</th>
+<th>b122</th>
+<th>b126</th>
+<th>b130</th>
+<th>b134</th>
+<th>b140</th>
+<th>b147</th>
+<th>b152</th>
+<th>b164</th>
+<th>b180</th>
+<th>...</th>
+<th>e450</th>
+<th>e455</th>
+<th>e460</th>
+<th>e465</th>
+<th>e570</th>
+<th>e575</th>
+<th>e580</th>
+<th>e590</th>
+<th>s770</th>
+<th>phcs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>1</th>
+<td>0</td>
+<td>1</td>
+<td>2</td>
+<td>1</td>
+<td>1</td>
+<td>0</td>
+<td>0</td>
+<td>2</td>
+<td>0</td>
+<td>0</td>
+<td>...</td>
+<td>4</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>3</td>
+<td>3</td>
+<td>4</td>
+<td>3</td>
+<td>0</td>
+<td>44.33</td>
+</tr>
+<tr>
+<th>2</th>
+<td>3</td>
+<td>2</td>
+<td>2</td>
+<td>3</td>
+<td>3</td>
+<td>2</td>
+<td>3</td>
+<td>3</td>
+<td>3</td>
+<td>1</td>
+<td>...</td>
+<td>3</td>
+<td>3</td>
+<td>2</td>
+<td>2</td>
+<td>2</td>
+<td>2</td>
+<td>2</td>
+<td>2</td>
+<td>2</td>
+<td>21.09</td>
+</tr>
+<tr>
+<th>3</th>
+<td>0</td>
+<td>1</td>
+<td>2</td>
+<td>1</td>
+<td>1</td>
+<td>0</td>
+<td>1</td>
+<td>2</td>
+<td>0</td>
+<td>0</td>
+<td>...</td>
+<td>4</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>3</td>
+<td>3</td>
+<td>4</td>
+<td>0</td>
+<td>0</td>
+<td>41.74</td>
+</tr>
+<tr>
+<th>4</th>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>2</td>
+<td>1</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>...</td>
+<td>2</td>
+<td>2</td>
+<td>-1</td>
+<td>0</td>
+<td>0</td>
+<td>2</td>
+<td>2</td>
+<td>1</td>
+<td>1</td>
+<td>33.96</td>
+</tr>
+<tr>
+<th>5</th>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>...</td>
+<td>1</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>46.29</td>
+</tr>
+</tbody>
+</table>
+<p>5 rows × 68 columns</p>
+</center>
+</div>
+
+
+
+The variable of interest here is `phcs`, which is a subjective physical health score.  The predictors we are interested in are `d450` and `d455`.
+
+
+```python
+df = all_df[['d450', 'd455', 'phcs']]
+```
+
+
+```python
+df.head()
+```
+
+
+
+
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>d450</th>
+<th>d455</th>
+<th>phcs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>1</th>
+<td>0</td>
+<td>2</td>
+<td>44.33</td>
+</tr>
+<tr>
+<th>2</th>
+<td>3</td>
+<td>3</td>
+<td>21.09</td>
+</tr>
+<tr>
+<th>3</th>
+<td>0</td>
+<td>2</td>
+<td>41.74</td>
+</tr>
+<tr>
+<th>4</th>
+<td>3</td>
+<td>2</td>
+<td>33.96</td>
+</tr>
+<tr>
+<th>5</th>
+<td>0</td>
+<td>0</td>
+<td>46.29</td>
+</tr>
+</tbody>
+</table>
+</center>
+</div>
+
+
+
+These predictors are ratings on a five-point scale (0-4) of the patient's impairment while walking (`d450`) and moving around (`d455`).  For more information on this data, consult the [`ordPens` documentation](https://cran.r-project.org/web/packages/ordPens/ordPens.pdf).
+
+The following plots show a fairly strong monotonic relationship between `d450`, `d455`, and `phcs`.
+
+
+```python
+fig, (d450_ax, d455_ax) = plt.subplots(ncols=2, sharey=True, figsize=(16, 6))
+
+sns.stripplot('d450', 'phcs', data=df,
+              jitter=0.1, color='C0', alpha=0.75,
+              ax=d450_ax);
+sns.stripplot('d455', 'phcs', data=df,
+              jitter=0.1, color='C0', alpha=0.75,
+              ax=d455_ax);
+
+d455_ax.set_ylabel("");
+fig.tight_layout();
+```
+
+
+<center>![png](/resources/monotonic/Monotonic%20Effects%20in%20PyMC3_15_0.png)</center>
+
+
+The big idea of the paper is to include monotonic effects due to these ordinal predictors as follows.  A scalar $b \sim N(0, 10^2)$ parameterizes the overall strength and direction of the relationship, and a Dirichlet vector $\xi \sim \textrm{Dirichlet}(1, \ldots, 1)$ encodes how much of $b$ is gained at each level.  The parameters $b$ and $\xi$ are combined into
+
+$$mo(i) = b \sum_{k = 0}^i \xi_k$$
+
+which can be included as a term in a regression model.  It is evident that if $i < j$ then $mo(i) \leq mo(j)$ since
+
+$$mo(j) - mo(i) = b \sum_{k = i + 1}^j \xi_k \geq 0$$
+
+and therefore the effect of this term will be monotonic as desired.
+
+The following function constructs this distribution in PyMC3.
+
+
+```python
+def monotonic_prior(name, n_cat):
+    b = pm.Normal(f'b_{name}', 0., 10.)
+    ξ = pm.Dirichlet(f'ξ_{name}', np.ones(n_cat))
+
+    return pm.Deterministic(f'mo_{name}', b * ξ.cumsum())
+```
+
+With this notation in hand, our model is
+
+$$
+\begin{align*}
+    \mu_i
+        & = \beta_0 + mo_{\textrm{d450}}(j_i) + mo_{\textrm{d455}}(k_i) \\
+    \beta_0
+        & \sim N(0, 10^2) \\
+    y_i
+        & \sim N(\mu_i, \sigma^2) \\
+    \sigma
+        & \sim \textrm{HalfNormal}(5^2)
+\end{align*}
+$$
+
+where $j_i$ and $k_i$ are the level of `d450` and `d455` for the $i$-th patient respectively and $y_i$ is that patient's `phcs` score.
+
+We now express this model in PyMC3.
+
+
+```python
+d450 = df['d450'].values
+d450_cats = np.unique(d450)
+d450_n_cat = d450_cats.size
+d450_ = shared(d450)
+
+d455 = df['d455'].values
+d455_cats = np.unique(d455)
+d455_n_cat = d455_cats.size
+d455_ = shared(d455)
+
+phcs = df['phcs'].values
+```
+
+
+```python
+with pm.Model() as model:
+    β0 = pm.Normal('β0', 0., 10.)
+
+    mo_d450 = monotonic_prior('d450', d450_n_cat)
+    mo_d455 = monotonic_prior('d455', d455_n_cat)
+    
+    μ = β0 + mo_d450[d450_] + mo_d455[d455_]
+    σ = pm.HalfNormal('σ', 5.)
+    phcs_obs = pm.Normal('phcs', μ, σ, observed=phcs)
+```
+
+We now sample from the model's posterior distribution.
+
+
+```python
+CHAINS = 3
+SEED = 934520 # from random.org
+
+SAMPLE_KWARGS = {
+    'draws': 1000,
+    'tune': 1000,
+    'chains': CHAINS,
+    'random_seed': list(SEED + np.arange(CHAINS))
+}
+```
+
+
+```python
+with model:
+    trace = pm.sample(**SAMPLE_KWARGS)
+```
+
+    Auto-assigning NUTS sampler...
+    Initializing NUTS using jitter+adapt_diag...
+    Multiprocess sampling (3 chains in 2 jobs)
+    NUTS: [σ, ξ_d455, b_d455, ξ_d450, b_d450, β0]
+    Sampling 3 chains: 100%|██████████| 6000/6000 [00:41<00:00, 145.59draws/s]
+    The number of effective samples is smaller than 25% for some parameters.
+
+
+We use [`arviz`](https://arviz-devs.github.io/arviz/index.html) to check the performance of our sampler.
+
+
+```python
+inf_data = az.convert_to_inference_data(trace)
+```
+
+The energy plot, BFMI, and Gelman-Rubin statistics show no cause for concern.
+
+
+```python
+az.plot_energy(inf_data);
+```
+
+
+<center>![png](/resources/monotonic/Monotonic%20Effects%20in%20PyMC3_27_0.png)</center>
+
+
+
+```python
+az.gelman_rubin(inf_data).max()
+```
+
+
+
+
+```
+<xarray.Dataset>
+Dimensions:  ()
+Data variables:
+    β0       float64 1.0
+    b_d450   float64 1.0
+    b_d455   float64 1.0
+    ξ_d450   float64 1.0
+    mo_d450  float64 1.0
+    ξ_d455   float64 1.0
+    mo_d455  float64 1.0
+    σ        float64 1.0
+```
+
+
+
+We now sample from the model's posterior predictive distribution and visualize the results.
+
+
+```python
+pp_d450, pp_d455 = np.asarray(list(zip(*product(d450_cats, d455_cats))))
+
+d450_.set_value(pp_d450)
+d455_.set_value(pp_d455)
+```
+
+
+```python
+with model:
+    pp_trace = pm.sample_posterior_predictive(trace)
+```
+
+    100%|██████████| 3000/3000 [00:07<00:00, 388.49it/s]
+
+
+
+```python
+pp_df = pd.DataFrame({
+    'd450': pp_d450,
+    'd455': pp_d455,
+    'pp_phcs_mean': pp_trace['phcs'].mean(axis=0)
+})
+```
+
+The important feature of this encoding of ordinal predictors is that the $\xi$ parameters allow different levels of the predictor to contribute to result in a different change in the effect, which is in contrast to what happens when these are included as linear predictors, which is quite common in the literature.
+
+
+```python
+REF_CAT = 1
+```
+
+
+```python
+fig, (d450_ax, d455_ax) = plt.subplots(ncols=2, sharey=True, figsize=(16, 6))
+
+(pp_df.pivot_table('pp_phcs_mean', 'd450', 'd455')
+      .plot(marker='o', ax=d450_ax));
+
+d450_ax.set_xticks(d450_cats);
+d450_ax.set_ylabel("Posterior predictive phcs");
+
+(pp_df.pivot_table('pp_phcs_mean', 'd455', 'd450')
+      .plot(marker='o', ax=d455_ax));
+
+d455_ax.set_xticks(d455_cats);
+
+fig.tight_layout();
+```
+
+
+<center>![png](/resources/monotonic/Monotonic%20Effects%20in%20PyMC3_35_0.png)</center>
+
+
+The following plot corresponds to Figure 3 in the original paper, and the dark lines agree with the mean in that figure quite well.
+
+
+```python
+fig, (d450_ax, d455_ax) = plt.subplots(ncols=2, sharey=True, figsize=(16, 6))
+
+(pp_df[pp_df['d455'] != REF_CAT]
+      .pivot_table('pp_phcs_mean', 'd450', 'd455')
+      .plot(marker='o', c='k', alpha=0.5, legend=False,
+            ax=d450_ax));
+(pp_df[pp_df['d455'] == REF_CAT]
+      .plot('d450', 'pp_phcs_mean',
+            marker='o', c='k',
+            label=f"Refernce category (d455 = {REF_CAT})",
+            ax=d450_ax));
+
+d450_ax.set_xticks(d450_cats);
+d450_ax.set_ylabel("Posterior excpected phcs");
+
+(pp_df[pp_df['d450'] != REF_CAT]
+      .pivot_table('pp_phcs_mean', 'd455', 'd450')
+      .plot(marker='o', c='k', alpha=0.5, legend=False,
+            ax=d455_ax));
+(pp_df[pp_df['d450'] == REF_CAT]
+      .plot('d455', 'pp_phcs_mean',
+            marker='o', c='k',
+            label=f"Refernce category (d450 = {REF_CAT})",
+            ax=d455_ax));
+
+d455_ax.set_xticks(d455_cats);
+
+fig.tight_layout();
+```
+
+
+<center>![png](/resources/monotonic/Monotonic%20Effects%20in%20PyMC3_37_0.png)</center>
+
+
+For reference, we compare this model to a model that includes `d450` and `d455` as linear predictors.  This model is given by
+
+$$
+\begin{align*}
+    \mu_i
+        & = \beta_0 + \beta_{\textrm{d450}} \cdot j(i) + \beta_{\textrm{d455}} \cdot k(i) \\
+    \beta_0, \beta_{\textrm{d450}}, \beta_{\textrm{d455}}
+        & \sim N(0, 10^2) \\
+    y_i
+        & \sim N(\mu_i, \sigma^2) \\
+    \sigma
+        & \sim \textrm{HalfNormal}(5^2)
+\end{align*}
+$$
+
+
+```python
+d450_.set_value(d450)
+d455_.set_value(d455)
+```
+
+
+```python
+with pm.Model() as linear_model:
+    β0 = pm.Normal('β0', 0., 10.)
+    β_d450 = pm.Normal('β_d450', 0., 10.)
+    β_d455 = pm.Normal('β_d455', 0., 10.)
+    
+    μ = β0 + β_d450 * d450_ + β_d455 * d455_
+    σ = pm.HalfNormal('σ', 5.)
+    phcs_obs = pm.Normal('phcs', μ, σ, observed=phcs)
+```
+
+
+```python
+with linear_model:
+    linear_trace = pm.sample(**SAMPLE_KWARGS)
+```
+
+    Auto-assigning NUTS sampler...
+    Initializing NUTS using jitter+adapt_diag...
+    Multiprocess sampling (3 chains in 2 jobs)
+    NUTS: [σ, β_d455, β_d450, β0]
+    Sampling 3 chains: 100%|██████████| 6000/6000 [00:07<00:00, 771.92draws/s] 
+
+
+As in the paper, compare these models by stacking their posterioir predictive distributions.
+
+
+```python
+comp_df = (pm.compare({
+                model: trace,
+                linear_model: linear_trace
+             })
+             .rename({
+                 0: "Paper",
+                 1: "Linear"
+             }))
+```
+
+
+```python
+comp_df
+```
+
+
+
+
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>WAIC</th>
+<th>pWAIC</th>
+<th>dWAIC</th>
+<th>weight</th>
+<th>SE</th>
+<th>dSE</th>
+<th>var_warn</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>Paper</th>
+<td>2825.24</td>
+<td>6.22</td>
+<td>0</td>
+<td>1</td>
+<td>29.01</td>
+<td>0</td>
+<td>0</td>
+</tr>
+<tr>
+<th>Linear</th>
+<td>2830.2</td>
+<td>3.7</td>
+<td>4.97</td>
+<td>0</td>
+<td>29.09</td>
+<td>4.42</td>
+<td>0</td>
+</tr>
+</tbody>
+</table>
+</center>
+</div>
+
+
+
+We see that the model from the paper has a lower WAIC and gets 100% of the weight, a strong sign that it is surperior to the linear model.
+
+This post is available as a Jupyter notebook [here](https://nbviewer.jupyter.org/gist/AustinRochford/166c01cd24979c27ffb5b106904cd802).

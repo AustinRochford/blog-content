@@ -1,0 +1,645 @@
+---
+title: Evaluating Precision in Sports Analytics
+tags: MLB, NHL, Bayesian Statistics, PyMC3
+---
+
+<style>
+.dataframe * {border-color: #c0c0c0 !important;}
+.dataframe th{background: #eee;}
+.dataframe td{
+    background: #fff;
+    text-align: right; 
+    min-width:5em;
+}
+
+/* Format summary rows */
+.dataframe-summary-row tr:last-child,
+.dataframe-summary-col td:last-child{
+background: #eee;
+    font-weight: 500;
+}
+</style>
+
+One of my data anaylsis pet peeves is [false precision](https://en.wikipedia.org/wiki/False_precision).  Just because it is possible calculate a quantity to three decimal places doesn't mean all of those decimal places are meaningful.  This post explores how much precision is justified in the context of two common sports statistics: batting average in Major League Baseball and save percentage in the National Hockey League.  Using Bayesian hierarchical models, we find that though these quantities are conventionally calculated to three decimal places, only the first two decimal places of precision are justified.
+
+
+```python
+%matplotlib inline
+```
+
+
+```python
+import arviz as az
+from matplotlib import pyplot as plt
+from matplotlib.ticker import StrMethodFormatter
+import numpy as np
+import pandas as pd
+import pymc3 as pm
+import scipy as sp
+import seaborn as sns
+```
+
+
+```python
+sns.set(color_codes=True)
+
+svpct_formatter = ba_formatter = StrMethodFormatter("{x:.3f}")
+```
+
+## Batting average
+
+We begin by loading hitting data for the 2018 MLB season from [Baseball Reference](https://www.baseball-reference.com/leagues/MLB/2018-standard-batting.shtml#players_standard_batting::none).
+
+
+```python
+def get_data_url(filename):
+    return f"https://www.austinrochford.com/resources/sports_precision/{filename}"
+```
+
+
+```python
+def load_data(filepath, player_col, usecols):
+    df = pd.read_csv(filepath, usecols=[player_col] + usecols)
+    
+    return (pd.concat((df[player_col]
+                         .str.split('\\', expand=True)
+                         .rename(columns={0: 'name', 1: 'player_id'}),
+                       df.drop(player_col, axis=1)),
+                      axis=1)
+              .rename(columns=str.lower)
+              .groupby(['player_id', 'name'])
+              .first() # players that switched teams have their entire season stats listed once per team
+              .reset_index('name'))
+```
+
+
+```python
+mlb_df = load_data(get_data_url('2018_batting.csv'), 'Name', ['AB', 'H'])
+```
+
+
+```python
+mlb_df.head()
+```
+
+
+
+
+<div>
+<center>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>name</th>
+<th>ab</th>
+<th>h</th>
+</tr>
+<tr>
+<th>player_id</th>
+<th></th>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>abreujo02</th>
+<td>Jose Abreu</td>
+<td>499</td>
+<td>132</td>
+</tr>
+<tr>
+<th>acunaro01</th>
+<td>Ronald Acuna</td>
+<td>433</td>
+<td>127</td>
+</tr>
+<tr>
+<th>adamewi01</th>
+<td>Willy Adames</td>
+<td>288</td>
+<td>80</td>
+</tr>
+<tr>
+<th>adamja01</th>
+<td>Jason Adam</td>
+<td>0</td>
+<td>0</td>
+</tr>
+<tr>
+<th>adamsau02</th>
+<td>Austin L. Adams</td>
+<td>0</td>
+<td>0</td>
+</tr>
+</tbody>
+</table>
+</center>
+</div>
+
+
+
+
+```python
+batter_df = mlb_df[mlb_df['ab'] > 0]
+n_player, _ = batter_df.shape
+```
+
+This data set covers nearly 1,000 MLB players.
+
+
+```python
+n_player
+```
+
+
+
+
+```
+984
+```
+
+
+
+[Batting average](https://en.wikipedia.org/wiki/Batting_average_(baseball%29) is the most basic summary of a player's batting performance and is defined as their number of hits divided by their number of at bats.  In order to assess the amount of precision that is justified when calculating batting average, we build a hierarchical logistic model.  Let $n_i$ be the number of at bats for the $i$-th player and let $y_i$ be their number of hits.  Our model is
+
+$$
+\begin{align*}
+    \mu_{\eta}
+        & \sim N(0, 5^2) \\
+    \sigma_{\eta}
+        & \sim \textrm{Half-}N(2.5^2) \\
+    \eta_i
+        & \sim N(\mu, \sigma_{\eta}^2) \\
+    \textrm{ba}_i
+        & = \textrm{sigm}(\eta_i) \\
+    y_i\ |\ n_i
+        & \sim \textrm{Binomial}(n_i, \textrm{ba}_i).
+\end{align*}
+$$
+
+We specify this model in [`pymc3`](https://docs.pymc.io/) below using a [non-centered parametrization](https://twiecki.github.io/blog/2017/02/08/bayesian-hierchical-non-centered/).
+
+
+```python
+def hierarchical_normal(name, shape, μ=None):
+    if μ is None:
+        μ = pm.Normal(f"μ_{name}", 0., 5.)
+    
+    Δ = pm.Normal(f"Δ_{name}", shape=shape)
+    σ = pm.HalfNormal(f"σ_{name}", 2.5)
+    
+    return pm.Deterministic(name, μ + Δ * σ)
+```
+
+
+```python
+with pm.Model() as mlb_model:
+    η = hierarchical_normal("η", n_player)
+    ba = pm.Deterministic("ba", pm.math.sigmoid(η))
+    
+    hits = pm.Binomial("hits", batter_df['ab'], ba, observed=batter_df['h'])
+```
+
+We proceeed to sample from the model's posterior distribution.
+
+
+```python
+CHAINS = 3
+SEED = 88564 # from random.org, for reproducibility
+
+SAMPLE_KWARGS = {
+    'draws': 1000,
+    'tune': 1000,
+    'chains': CHAINS,
+    'cores': CHAINS,
+    'random_seed': list(SEED + np.arange(CHAINS))
+}
+```
+
+
+```python
+with mlb_model:
+    mlb_trace = pm.sample(**SAMPLE_KWARGS)
+```
+
+    Auto-assigning NUTS sampler...
+    Initializing NUTS using jitter+adapt_diag...
+    Multiprocess sampling (3 chains in 3 jobs)
+    NUTS: [σ_η, Δ_η, μ_η]
+    Sampling 3 chains: 100%|██████████| 6000/6000 [00:44<00:00, 133.94draws/s]
+
+
+Before drawing conclusions from the posterior samples, we use [`arviz`](https://arviz-devs.github.io/arviz/index.html) to verify that there are no obvious problems with the sampler diagnostics.
+
+
+```python
+az.plot_energy(mlb_trace);
+```
+
+
+<center>![png](/resources/sports_precision/sports_precision_21_0.png)</center>
+
+
+
+```python
+az.gelman_rubin(mlb_trace).max()
+```
+
+
+
+
+```
+<xarray.Dataset>
+Dimensions:  ()
+Data variables:
+    μ_η      float64 1.01
+    Δ_η      float64 1.0
+    σ_η      float64 1.0
+    η        float64 1.0
+    ba       float64 1.0
+```
+
+
+
+First we'll examine the posterior distribution of [Mike Trout](https://www.baseball-reference.com/players/t/troutmi01.shtml)'s batting average.
+
+
+```python
+fig, ax = plt.subplots(figsize=(8, 6))
+
+trout_ix = (batter_df.index == 'troutmi01').argmax()
+ax.hist(mlb_trace['ba'][:, trout_ix], bins=30, alpha=0.5);
+
+ax.vlines(batter_df['h']
+                   .div(batter_df['ab'])
+                   .loc['troutmi01'],
+          0, 275,
+          linestyles='--',
+          label="Actual batting average");
+
+ax.xaxis.set_major_formatter(ba_formatter);
+ax.set_xlabel("Batting average");
+
+ax.set_ylabel("Posterior density");
+
+ax.legend();
+ax.set_title("Mike Trout");
+```
+
+
+<center>![png](/resources/sports_precision/sports_precision_24_0.png)</center>
+
+
+We see that the posterior places significant mass between .260 and .320, quite a wide range of batting averages.  This range roughly corresponds to the 95% credible interval for his 2018 batting average.
+
+
+```python
+np.percentile(mlb_trace['ba'][:, trout_ix], [2.5, 97.5])
+```
+
+
+
+
+```
+array([ 0.25516468,  0.32704036])
+```
+
+
+
+We will use the width of the 95% credible interval for each player's batting average to determine how many digits of precision are justified.
+
+
+```python
+mlb_df = batter_df.assign(
+    width_95=sp.stats.iqr(mlb_trace["ba"], axis=0, rng=(2.5, 97.5))
+)
+```
+
+The following plot shows the width of these intervals, grouped by the number of at bats the player had in 2018.
+
+
+```python
+def plot_ci_width(grouped, width):
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    low = grouped.quantile(0.025)
+    high = grouped.quantile(0.975)
+
+    ax.fill_between(low.index, low, high,
+                    alpha=0.25,
+                    label=f"{width:.0%} interval");
+
+    grouped.mean().plot(ax=ax, label="Average")
+
+    ax.set_ylabel("Width of 95% credible interval");
+    ax.legend(loc=0);
+    
+    return ax
+```
+
+
+```python
+ax = plot_ci_width(mlb_df['width_95'].groupby(mlb_df['ab'].round(-2)), 0.95)
+
+ax.set_xlim(0, mlb_df['ab'].max());
+ax.set_xlabel("At bats");
+
+ax.set_ylim(bottom=0.);
+ax.yaxis.set_major_formatter(ba_formatter);
+
+ax.set_title("Batting average");
+```
+
+
+<center>![png](/resources/sports_precision/sports_precision_31_0.png)</center>
+
+
+We see that, on average, about 100 at bats are required to justify a single digit of precision in a player's batting average.  Even in the limit of very many at bats (600 at bats corresponds to just under four at bats per game across a 162 game season) the 95% credible interval has an average width approaching 0.060.  This limit indicates that batting average is at most meaningful to the second digit, and even the second digit has a fair bit of uncertainty.  This result is not surprising; calculating batting average to three decimal places is a historical convention, but I don't think many analysts rely on the third digit for their decisions/arguments.  While intuitive, it is pleasant to have a somewhat rigorous justification for this practice.
+
+## Save percentage
+
+We apply a similar analysis to save percentage in the NHL.  First we load 2018 goaltending data from [Hockey Reference](https://www.hockey-reference.com/leagues/NHL_2018_goalies.html#stats::none).
+
+
+```python
+nhl_df = load_data(get_data_url('2017_2018_goalies.csv'), 'Player', ['SA', 'SV'])
+```
+
+
+```python
+nhl_df.head()
+```
+
+
+
+
+<div>
+<center>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>name</th>
+<th>sa</th>
+<th>sv</th>
+</tr>
+<tr>
+<th>player_id</th>
+<th></th>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>allenja01</th>
+<td>Jake Allen</td>
+<td>1614</td>
+<td>1462</td>
+</tr>
+<tr>
+<th>andercr01</th>
+<td>Craig Anderson</td>
+<td>1768</td>
+<td>1588</td>
+</tr>
+<tr>
+<th>anderfr01</th>
+<td>Frederik Andersen</td>
+<td>2211</td>
+<td>2029</td>
+</tr>
+<tr>
+<th>appleke01</th>
+<td>Ken Appleby</td>
+<td>55</td>
+<td>52</td>
+</tr>
+<tr>
+<th>bernijo01</th>
+<td>Jonathan Bernier</td>
+<td>1092</td>
+<td>997</td>
+</tr>
+</tbody>
+</table>
+</center>
+</div>
+
+
+
+
+```python
+n_goalie, _ = nhl_df.shape
+```
+
+This data set consists of the goaltending performance of just under 100 players.
+
+
+```python
+n_goalie
+```
+
+
+
+
+```
+95
+```
+
+
+
+Our [save percentage](https://en.wikipedia.org/wiki/Save_percentage) model is almost identical to the batting average model.  Let $n_i$ be the number of at shots the $i$-th goalie faced and let $y_i$ be the number of saves they made.  The model is
+
+$$
+\begin{align*}
+    \mu_{\eta}
+        & \sim N(0, 5^2) \\
+    \sigma_{\eta}
+        & \sim \textrm{Half-}N(2.5^2) \\
+    \eta_i
+        & \sim N(\mu, \sigma_{\eta}^2) \\
+    \textrm{svp}_i
+        & = \textrm{sigm}(\eta_i) \\
+    y_i\ |\ n_i
+        & \sim \textrm{Binomial}(n_i, \textrm{svp}_i).
+\end{align*}
+$$
+
+
+```python
+with pm.Model() as nhl_model:
+    η = hierarchical_normal("η", n_goalie)
+    svp = pm.Deterministic("svp", pm.math.sigmoid(η))
+    
+    saves = pm.Binomial("saves", nhl_df['sa'], svp, observed=nhl_df['sv'])
+```
+
+
+```python
+with nhl_model:
+    nhl_trace = pm.sample(nuts_kwargs={'target_accept': 0.9}, **SAMPLE_KWARGS)
+```
+
+    Auto-assigning NUTS sampler...
+    Initializing NUTS using jitter+adapt_diag...
+    Multiprocess sampling (3 chains in 3 jobs)
+    NUTS: [σ_η, Δ_η, μ_η]
+    Sampling 3 chains: 100%|██████████| 6000/6000 [00:17<00:00, 338.38draws/s]
+
+
+Once again, the convergence diagnostics show no cause for concern.
+
+
+```python
+az.plot_energy(nhl_trace);
+```
+
+
+<center>![png](/resources/sports_precision/sports_precision_44_0.png)</center>
+
+
+
+```python
+az.gelman_rubin(nhl_trace).max()
+```
+
+
+
+
+```
+<xarray.Dataset>
+Dimensions:  ()
+Data variables:
+    μ_η      float64 1.0
+    Δ_η      float64 1.0
+    σ_η      float64 1.0
+    η        float64 1.0
+    svp      float64 1.0
+```
+
+
+
+We examine the posterior distribution of [Sergei Bobrovsky](https://www.hockey-reference.com/players/b/bobrose01.html)'s save percentage.
+
+
+```python
+fig, ax = plt.subplots(figsize=(8, 6))
+
+bobs_ix = (nhl_df.index == 'bobrose01').argmax()
+ax.hist(nhl_trace['svp'][:, bobs_ix], bins=30, alpha=0.5);
+
+ax.vlines(nhl_df['sv']
+                .div(nhl_df['sa'])
+                .loc['bobrose01'],
+          0, 325,
+          linestyles='--',
+          label="Actual save percentage");
+
+ax.xaxis.set_major_formatter(ba_formatter);
+ax.set_xlabel("Save percentage");
+
+ax.set_ylabel("Posterior density");
+
+ax.legend(loc=2);
+ax.set_title("Sergei Bobrovsky");
+```
+
+
+<center>![png](/resources/sports_precision/sports_precision_47_0.png)</center>
+
+
+We see that the posterior places significant mass between .905 and .925.  We see below that the best and worst save percentages (for goalies that faced at least 200 shots in 2018) are separated by about 0.070.
+
+
+```python
+(nhl_df['sv']
+       .div(nhl_df['sa'])
+       [nhl_df['sa'] > 200]
+       .quantile([0., 1.]))
+```
+
+
+
+
+```
+0.0    0.866995
+1.0    0.933712
+dtype: float64
+```
+
+
+
+Sergei Bobrovsky's 0.020-wide credible interval is a significant proportion of this 0.070 total range.
+
+
+```python
+np.percentile(nhl_trace['svp'][:, bobs_ix], [2.5, 97.5])
+```
+
+
+
+
+```
+array([ 0.90683748,  0.92526507])
+```
+
+
+
+As with batting average, we plot the width of each goalie's interval, grouped by the number of shots they faced.
+
+
+```python
+nhl_df = nhl_df.assign(
+    width_95=sp.stats.iqr(nhl_trace["svp"], axis=0, rng=(2.5, 97.5))
+)
+```
+
+
+```python
+ax = plot_ci_width(nhl_df['width_95'].groupby(nhl_df['sa'].round(-2)), 0.95)
+
+ax.set_xlim(0, nhl_df['sa'].max());
+ax.set_xlabel("Shots against");
+
+ax.set_ylim(bottom=0.);
+ax.yaxis.set_major_formatter(svpct_formatter);
+
+ax.set_title("Save percentage");
+```
+
+
+<center>![png](/resources/sports_precision/sports_precision_54_0.png)</center>
+
+
+This plot shows that even goalies that face many (2000+) shots have credible intervals wider that 0.010, a signifcant proportion of the total variation between goalies.
+
+This post is available as a Jupyter notebook [here](https://nbviewer.jupyter.org/gist/AustinRochford/36f072aedb7df368fdcf7d98998728e4/sports_precision.ipynb).

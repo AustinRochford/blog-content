@@ -1,0 +1,261 @@
+---
+title: How to Write a Jupyter Magic in Python
+tags: Python, Jupyter
+---
+
+[Jupyter magics](https://ipython.readthedocs.io/en/stable/interactive/magics.html) allow us to run convenient utility functions within Jupyter notebooks. Anyone who has done much data analysis in a Jupyter notebook is likely familiar with
+
+
+```python
+%matplotlib inline
+```
+
+which causes our `matplotlib` figures to be rendered in the notebook.  This short post will explain the mechanics of creating Jupyter notebooks and exists mostly as a reference for my future self.  For a slightly more involved example, my package [`giphy-ipython-magic`](https://github.com/AustinRochford/giphy-ipython-magic) serves well.
+
+
+```python
+!pip install -q giphy-ipython-magic
+```
+
+
+```python
+%load_ext giphy_magic
+%giphy magic
+```
+
+
+
+
+<center><img src="https://media3.giphy.com/media/YV4MD2hR4SJttvxPiE/giphy.gif"/></center>
+
+
+
+## A simple magic
+
+To start, we'll implement a Jupyter magic that prints the result of [`cowsay`](https://en.wikipedia.org/wiki/Cowsay) (one of my favorite Unix utilities) given a phrase.
+
+
+```python
+!pip install -q cowsay
+```
+
+
+```python
+%%writefile ./cowsay_magic.py
+import cowsay as cs
+
+def cowsay(msg):
+    cs.cow(msg)
+```
+
+    Overwriting ./cowsay_magic.py
+
+
+Here the [`%%writefile` magic](https://ipython.readthedocs.io/en/stable/interactive/magics.html#cellmagic-writefile) writes the contents of the rest of the cell to the `cowsay_magic.py` file in the current directory.  The script written to this file calls a [Python library](https://github.com/VaasuDevanS/cowsay-python) that reimplements `cowsay` and prints the result.  In order for Jupyter to know that this file and function define a magic command, we must register the magic in a function named `load_ipython_extension`.  (Note that we could also use the [`@register_line_magic` decorator](http://localhost:8888/notebooks/jupyter_magic/Jupyter%20Magic.ipynb), but `load_ipython_extension` is necessary to redefine this magic momentarily.  If anyone knows how to do this with the decorator, I'm all ears.)
+
+
+```python
+%%writefile -a ./cowsay_magic.py
+def load_ipython_extension(ipython):
+    ipython.register_magic_function(cowsay, 'line')
+```
+
+    Appending to ./cowsay_magic.py
+
+
+Here the `-a` argument causes `%%writefile` to append to the existing file instead of overwriting it, which is the default behavior.
+
+We make sure `cowsay_magic.py` is on the `PYTHONPATH` and load the magic into the Jupyter environment.
+
+
+```python
+import sys
+
+sys.path.append('.')
+```
+
+
+```python
+%load_ext cowsay_magic
+```
+
+We can now use `%cowsay` to summon our bovine friend.
+
+
+```python
+%cowsay Hello Jupyter!
+```
+
+      ______________
+    | Hello Jupyter! |
+      ==============
+                  \
+                   \
+                     ^__^
+                     (oo)\_______
+                     (__)\       )\/\
+                         ||----w |
+                         ||     ||
+
+
+### Adding arguments
+
+Jupyter passes the string after the magic as `msg`, and many magics implement shell-style arguments.  We will add argument parsing to `%cowsay` in order to change the type of figure in the ASCII art.
+
+
+```python
+%%writefile ./cowsay_magic.py
+from argparse import ArgumentParser
+import cowsay as cs
+
+def parse_args(msg):
+    parser = ArgumentParser(prog='cowsay magic')
+    parser.add_argument('-f', dest='char_name', action='store', default='cow')
+    parser.add_argument('message', nargs='*')
+    
+    return parser.parse_args(msg.split())
+
+def cowsay(msg):
+    args = parse_args(msg)
+    
+    print(cs.get_output_string(args.char_name, ' '.join(args.message)))
+    
+def load_ipython_extension(ipython):
+    ipython.register_magic_function(cowsay, 'line')
+```
+
+    Overwriting ./cowsay_magic.py
+
+
+Here we have used the [`argparse`](https://docs.python.org/3/library/argparse.html) module to parse `msg`.  We reload the `cowsay_magic` extension.
+
+
+```python
+%reload_ext cowsay_magic
+```
+
+Passing no arguments to `%cowsay` still prints a cow.
+
+
+```python
+%cowsay Hello Jupyter!
+```
+
+      ______________
+    | Hello Jupyter! |
+      ==============
+                  \
+                   \
+                     ^__^
+                     (oo)\_______
+                     (__)\       )\/\
+                         ||----w |
+                         ||     ||
+
+
+Passing the `-f` argument to `%cowsay` changes the speaker.
+
+
+```python
+%cowsay -f trex Hello Jupyter!
+```
+
+      ______________
+    | Hello Jupyter! |
+      ==============
+                         \
+                          \
+                           \
+                            \
+                               .-=-==--==--.
+                         ..-=="  ,'o`)      `.
+                       ,'         `"'         \
+                      :  (                     `.__...._
+                      |                  )    /         `-=-.
+                      :       ,vv.-._   /    /               `---==-._
+                       \/\/\/VV ^ d88`;'    /                         `.
+                           ``  ^/d88P!'    /             ,              `._
+                              ^/    !'   ,.      ,      /                  "-,,__,,--'""""-.
+                             ^/    !'  ,'  \ . .(      (         _           )  ) ) ) ))_,-.\
+                            ^(__ ,!',"'   ;:+.:%:a.     \:.. . ,'          )  )  ) ) ,"'    '
+                            ',,,'','     /o:::":%:%a.    \:.:.:         .    )  ) _,'
+                             """'       ;':::'' `+%%%a._  \%:%|         ;.). _,-""
+                                    ,-='_.-'      ``:%::)  )%:|        /:._,"
+                                   (/(/"           ," ,'_,'%%%:       (_,'
+                                                  (  (//(`.___;        \
+                                                   \     \    `         `
+                                                    `.    `.   `.        :
+                                                      \. . .\    : . . . :
+                                                       \. . .:    `.. . .:
+                                                        `..:.:\     \:...\
+                                                         ;:.:.;      ::...:
+                                                         ):%::       :::::;
+                                                     __,::%:(        :::::
+                                                  ,;:%%%%%%%:        ;:%::
+                                                    ;,--""-.`\  ,=--':%:%:\
+                                                   /"       "| /-".:%%%%%%%\
+                                                                   ;,-"'`)%%)
+                                                                  /"      "|
+
+
+## Working with Python objects
+
+Our `%cowsay` magic works only with strings, but we can also manipulate Python objects in a magic function using [`eval`](https://docs.python.org/3/library/functions.html#eval).  To demonstrate, we will define a magic to invert the y-axis of a `matplotlib` plot.
+
+
+```python
+%%writefile flip_magic.py
+from IPython.core.magic import needs_local_scope
+
+@needs_local_scope
+def flip(fig_str, local_ns=None):
+    fig = eval(fig_str, None, local_ns)
+    fig.gca().invert_yaxis()
+    
+    return fig
+
+def load_ipython_extension(ipython):
+    ipython.register_magic_function(flip, 'line')
+```
+
+    Overwriting flip_magic.py
+
+
+Note the `@needs_local_scope` decorater that tells Jupyter to pass the local scope to our magic function.  We load `flip_magic` and see that it does indeed invert the y-axis of a simple plot.
+
+
+```python
+from matplotlib import pyplot as plt
+```
+
+
+```python
+fig, ax = plt.subplots(figsize=(8, 6))
+
+ax.plot([0, 1], [0, 1]);
+```
+
+
+<center>![png](/resources/jupyter-magic/Jupyter%20Magic_28_0.png)</center>
+
+
+
+```python
+%load_ext flip_magic
+```
+
+
+```python
+%flip fig
+```
+
+
+
+
+<center>![png](/resources/jupyter-magic/Jupyter%20Magic_30_0.png)</center>
+
+
+
+I hope that this simple tutorial has been helpful.  For more detail about the custom magic API, consult the excellent [Jupyter documentation](https://ipython.readthedocs.io/en/stable/config/custommagics.html).
+
+The notebook this post was generated from is available as a Jupyter notebook [here](https://nbviewer.jupyter.org/gist/AustinRochford/6c48e60953fad4069ff027c3fcdccc9a).

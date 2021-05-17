@@ -1,0 +1,2958 @@
+---
+title: A PyMC3 Analysis of Tyrannosaurid Growth Curves
+tags: Bayesian Statistics, PyMC3, Examples
+---
+
+<style>
+.dataframe * {border-color: #c0c0c0 !important;}
+.dataframe th{background: #eee;}
+.dataframe td{
+    background: #fff;
+    text-align: right; 
+    min-width:5em;
+}
+
+/* Format summary rows */
+.dataframe-summary-row tr:last-child,
+.dataframe-summary-col td:last-child{
+background: #eee;
+    font-weight: 500;
+}
+</style>
+
+In Chapter 7 of their excellent book [_Bayesian Statistical Methods_](https://bayessm.org/) (_BSM_ from now on), Reich and Ghosh work an [example analysis](https://www4.stat.ncsu.edu/~bjreich/BSMdata/T_rex.html) of the growth rates of [Tyrannosaurids](https://en.wikipedia.org/wiki/Tyrannosauridae) in `R` using [`JAGS`](https://en.wikipedia.org/wiki/Just_another_Gibbs_sampler).  This dataset and analysis are quite fun, so this post shows how to execute (almost) the same analysis in Python using PyCM3.
+
+<center><img src="https://img1.wsimg.com/isteam/ip/63bbf664-7db2-4c45-85ac-173680b714eb/b6a4ffdf-0e5b-4680-a317-d03661e7fa56.jpg" width=500></center>
+
+## The Dataset
+
+<figure>
+<center>
+<img src="https://austinrochford.com/resources/img/lego_trex.png" width=700 alt="Lego Tyrannosaurus Rex eating paleontologist minifigure">
+
+<caption>In addition to statistics, I am a Lego nerd.</caption>
+</center>
+</figure>
+
+To quote _BSM_,
+
+> We analyze the data from 20 fossils to estimate the growth curves of four tyrannosaurid species: Albertosaurus, Daspletosaurus, Gorgosaurus and Tyrannosaurus. The data are taken from Table 1 of Erickson, GM et al (2004).
+
+First we make some standard Python imports and load the dataset from the author's website.
+
+
+```python
+%matplotlib inline
+```
+
+
+```python
+from warnings import filterwarnings
+```
+
+
+```python
+from aesara import shared, tensor as at
+import arviz as az
+from matplotlib import MatplotlibDeprecationWarning, pyplot as plt
+import numpy as np
+import pandas as pd
+import pymc3 as pm
+import seaborn as sns
+```
+
+
+```python
+filterwarnings('ignore', category=UserWarning, module='aesara')
+filterwarnings('ignore', category=UserWarning, module='arviz')
+filterwarnings('ignore', category=MatplotlibDeprecationWarning, module='pandas')
+```
+
+
+```python
+sns.set(color_codes=True)
+```
+
+
+```python
+%%bash
+DATA_URI=https://www4.stat.ncsu.edu/~bjreich/BSMdata/Erickson.csv
+DATA_DEST=/tmp/Erickson.csv
+
+if [[ ! -e $DATA_DEST ]];
+then
+    wget -q -O $DATA_DEST $DATA_URI
+fi
+```
+
+
+```python
+df = (pd.read_csv('/tmp/Erickson.csv')
+        .rename(columns=str.lower)
+        .sort_values('age')
+        .reset_index(drop=True))
+```
+
+
+```python
+df.head()
+```
+
+
+
+
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>taxon</th>
+<th>spec. #</th>
+<th>age</th>
+<th>mass</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>0</th>
+<td>Albertosaurus</td>
+<td>RTMP 2002.45.46</td>
+<td>2</td>
+<td>50.3</td>
+</tr>
+<tr>
+<th>1</th>
+<td>Tyrannosaurus</td>
+<td>LACM 28471</td>
+<td>2</td>
+<td>29.9</td>
+</tr>
+<tr>
+<th>2</th>
+<td>Gorgosaurus</td>
+<td>FMNH PR2211</td>
+<td>5</td>
+<td>127.0</td>
+</tr>
+<tr>
+<th>3</th>
+<td>Gorgosaurus</td>
+<td>RTMP 86.144.1</td>
+<td>7</td>
+<td>229.0</td>
+</tr>
+<tr>
+<th>4</th>
+<td>Daspletosaurus</td>
+<td>RTMP 94.143.1</td>
+<td>10</td>
+<td>496.0</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+
+
+
+### Exploratory data analysis
+
+First we summarize and plot the data.
+
+
+```python
+df.describe()
+```
+
+
+
+
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>age</th>
+<th>mass</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>count</th>
+<td>20.00000</td>
+<td>20.000000</td>
+</tr>
+<tr>
+<th>mean</th>
+<td>15.10000</td>
+<td>1568.760000</td>
+</tr>
+<tr>
+<th>std</th>
+<td>7.05542</td>
+<td>1562.465702</td>
+</tr>
+<tr>
+<th>min</th>
+<td>2.00000</td>
+<td>29.900000</td>
+</tr>
+<tr>
+<th>25%</th>
+<td>13.00000</td>
+<td>579.250000</td>
+</tr>
+<tr>
+<th>50%</th>
+<td>15.50000</td>
+<td>1123.500000</td>
+</tr>
+<tr>
+<th>75%</th>
+<td>18.75000</td>
+<td>1795.000000</td>
+</tr>
+<tr>
+<th>max</th>
+<td>28.00000</td>
+<td>5654.000000</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+
+<br>
+
+```python
+grid = sns.catplot(x='age', y='mass', hue='taxon', data=df)
+
+grid.ax.set_xlim(left=1);
+grid.ax.set_xscale('log');
+
+grid.ax.set_ylim(bottom=100);
+grid.ax.set_yscale('log');
+```
+
+
+<center>![png](/resources/tyrannosaurid/Growth%20Curves%20REPARAM_14_0.png)</center>
+
+
+Note the logarithmic scale on both of the axes here.  A few points are immediately apparent.
+
+1. There are only 20 samples, so the data is fairly small.
+2. Mass varies fairly widely across taxa. 
+3. The relationship between age and mass appears linear on the log-log scale.
+4. Variance appears to increase with age.
+
+## Modeling
+
+Given the third and fourth observations about the data,
+
+> [w]e use multiplicative error rather than additive error because variation in the population likely increases with mass/age.
+
+Throughout this post $Y_i$ and $X_i$ will correspond to the mass and age of the $i$-th sample respectively.  Each of our four models will take the form
+
+$$Y_i = f_{j(i)}(X_i) \cdot \varepsilon_{j(i)}.$$
+
+Here $\varepsilon_j$ corresponds to the multiplicative error for the $j$-th taxon and $j(i)$ is the taxon identifier of the $i$-th sample.
+
+We place a [log-normal](https://en.wikipedia.org/wiki/Log-normal_distribution) prior on $\varepsilon_j$ so that $
+\textrm{E}(\varepsilon_j) = 1$ and $\textrm{Var}\left(\log(\varepsilon_j)\right) = \sigma_j^2$.  With the notation $y_i = \log Y_i$ and $x_i = \log X_i$, standard [distributional math](https://en.wikipedia.org/wiki/Log-normal_distribution#Generation_and_parameters) shows that
+
+$$y_i \sim N\left(\log\left(f_{j(i)}(X_{j(i)})\right) - \frac{\sigma_{j(i)}^2}{2}, \sigma_{j(i)}^2\right).$$
+
+Each of the four models we consider arises from a choice of the form of $f_j(X)$ (along with a prior for any of its unknown parameters) and a prior on $\sigma_j$.
+
+### Unpooled log-linear model
+
+Given the third observation above, we begin with a log-linear model for the relationship between age and mass.  If 
+
+$$f_j(X) = A_j \cdot X^{b_j}$$
+
+then
+
+$$\log\left(f_j(X)\right) = a_j + b_j \log X,$$
+
+where $a_j = \log A_j$.
+
+We define `log_age` and `log_mass` which correspond to $x_i$ and $y_i$ respectively.
+
+
+```python
+log_age = np.log(df['age'].values)
+log_mass = np.log(df['mass'].values)
+```
+
+We turn the taxon names into numeric identifiers and set up `shared` containers for `log_age` and `taxon_id`.  These `shared` containers are [`aesara`](https://github.com/pymc-devs/aesara)'s way to facilitate [posterior predictive](https://en.wikipedia.org/wiki/Posterior_predictive_distribution) sampling.  `aesara` is the PyMC team's fork of [`theano`](https://github.com/Theano/Theano).  Since active development on `theano` has ceased, `pymc3` now uses `aesara` for tensor calculations.
+
+
+```python
+taxon_id, taxon_map = df['taxon'].factorize(sort=True)
+n_taxon = taxon_map.size
+```
+
+
+```python
+taxon_id_ = shared(taxon_id)
+log_age_ = shared(log_age)
+```
+
+Given the second observation above, we will actually specify one model per taxon (hence the adjective "unpooled").  This model has regression coefficients
+
+$$
+\begin{align*}
+    a_j & \sim N(0, 2.5^2) \\
+    b_j & \sim N(0, 2.5^2).
+\end{align*}
+$$
+
+
+```python
+with pm.Model() as loglin_model:
+    a = pm.Normal("a", 0., 2.5, shape=n_taxon)
+    b = pm.Normal("b", 0., 2.5, shape=n_taxon)
+```
+
+Note that these prior differs differ slightly (in their variance) from those in the _BSM_. Nevertheless, the results will be quite similar.  With the prior on $\sigma_j \sim N(0, 2.5^2)$, we can finish specifying the model in code.
+
+
+```python
+with loglin_model:
+    σ = pm.HalfNormal("σ", 2.5, shape=n_taxon)
+    μ = a[taxon_id_] + b[taxon_id_] * log_age_ - 0.5 * σ[taxon_id_]**2
+
+    obs = pm.Normal("obs", μ, σ[taxon_id_], observed=log_mass)
+```
+
+We now sample from the posterior distribution of the model.
+
+
+```python
+CHAINS = 3
+DRAWS = 2000
+SEED = 12345 # for reproducibility
+
+SAMPLE_KWARGS = {
+    'cores': CHAINS,
+    'draws': DRAWS,
+    'random_seed': [SEED + i for i in range(CHAINS)],
+    'return_inferencedata': True,
+    'target_accept': 0.995
+}
+```
+
+
+```python
+with loglin_model:
+    loglin_trace = pm.sample(**SAMPLE_KWARGS)
+```
+
+    Auto-assigning NUTS sampler...
+    Initializing NUTS using jitter+adapt_diag...
+    Multiprocess sampling (3 chains in 3 jobs)
+    NUTS: [σ, b, a]
+
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='9000' class='' max='9000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [9000/9000 03:15<00:00 Sampling 3 chains, 0 divergences]
+</div>
+
+
+
+    Sampling 3 chains for 1_000 tune and 2_000 draw iterations (3_000 + 6_000 draws total) took 198 seconds.
+    The number of effective samples is smaller than 25% for some parameters.
+
+
+To check that there is no obvious problem with our samples we check the energy plot, Bayesian fraction of missing information (BFMI), and [Gelman-Rubin statistics](https://blog.stata.com/2016/05/26/gelman-rubin-convergence-diagnostic-using-multiple-chains/).
+
+
+```python
+az.plot_energy(loglin_trace);
+```
+
+
+<center>![png](/resources/tyrannosaurid/Growth%20Curves%20REPARAM_29_0.png)</center>
+
+
+Since the marginal and transitional energy distributions are similar and each BFMI is greater than 0.2, these diagnostics show no obvious issues.
+
+
+```python
+az.rhat(loglin_trace).max()
+```
+
+
+
+
+<div><svg style="position: absolute; width: 0; height: 0; overflow: hidden">
+<defs>
+<symbol id="icon-database" viewBox="0 0 32 32">
+<path d="M16 0c-8.837 0-16 2.239-16 5v4c0 2.761 7.163 5 16 5s16-2.239 16-5v-4c0-2.761-7.163-5-16-5z"></path>
+<path d="M16 17c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path>
+<path d="M16 26c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path>
+</symbol>
+<symbol id="icon-file-text2" viewBox="0 0 32 32">
+<path d="M28.681 7.159c-0.694-0.947-1.662-2.053-2.724-3.116s-2.169-2.030-3.116-2.724c-1.612-1.182-2.393-1.319-2.841-1.319h-15.5c-1.378 0-2.5 1.121-2.5 2.5v27c0 1.378 1.122 2.5 2.5 2.5h23c1.378 0 2.5-1.122 2.5-2.5v-19.5c0-0.448-0.137-1.23-1.319-2.841zM24.543 5.457c0.959 0.959 1.712 1.825 2.268 2.543h-4.811v-4.811c0.718 0.556 1.584 1.309 2.543 2.268zM28 29.5c0 0.271-0.229 0.5-0.5 0.5h-23c-0.271 0-0.5-0.229-0.5-0.5v-27c0-0.271 0.229-0.5 0.5-0.5 0 0 15.499-0 15.5 0v7c0 0.552 0.448 1 1 1h7v19.5z"></path>
+<path d="M23 26h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path>
+<path d="M23 22h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path>
+<path d="M23 18h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path>
+</symbol>
+</defs>
+</svg>
+<style>/* CSS stylesheet for displaying xarray objects in jupyterlab.
+ *
+ */
+
+:root {
+  --xr-font-color0: var(--jp-content-font-color0, rgba(0, 0, 0, 1));
+  --xr-font-color2: var(--jp-content-font-color2, rgba(0, 0, 0, 0.54));
+  --xr-font-color3: var(--jp-content-font-color3, rgba(0, 0, 0, 0.38));
+  --xr-border-color: var(--jp-border-color2, #e0e0e0);
+  --xr-disabled-color: var(--jp-layout-color3, #bdbdbd);
+  --xr-background-color: var(--jp-layout-color0, white);
+  --xr-background-color-row-even: var(--jp-layout-color1, white);
+  --xr-background-color-row-odd: var(--jp-layout-color2, #eeeeee);
+}
+
+html[theme=dark],
+body.vscode-dark {
+  --xr-font-color0: rgba(255, 255, 255, 1);
+  --xr-font-color2: rgba(255, 255, 255, 0.54);
+  --xr-font-color3: rgba(255, 255, 255, 0.38);
+  --xr-border-color: #1F1F1F;
+  --xr-disabled-color: #515151;
+  --xr-background-color: #111111;
+  --xr-background-color-row-even: #111111;
+  --xr-background-color-row-odd: #313131;
+}
+
+.xr-wrap {
+  display: block;
+  min-width: 300px;
+  max-width: 700px;
+}
+
+.xr-text-repr-fallback {
+  /* fallback to plain text repr when CSS is not injected (untrusted notebook) */
+  display: none;
+}
+
+.xr-header {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  border-bottom: solid 1px var(--xr-border-color);
+}
+
+.xr-header > div,
+.xr-header > ul {
+  display: inline;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.xr-obj-type,
+.xr-array-name {
+  margin-left: 2px;
+  margin-right: 10px;
+}
+
+.xr-obj-type {
+  color: var(--xr-font-color2);
+}
+
+.xr-sections {
+  padding-left: 0 !important;
+  display: grid;
+  grid-template-columns: 150px auto auto 1fr 20px 20px;
+}
+
+.xr-section-item {
+  display: contents;
+}
+
+.xr-section-item input {
+  display: none;
+}
+
+.xr-section-item input + label {
+  color: var(--xr-disabled-color);
+}
+
+.xr-section-item input:enabled + label {
+  cursor: pointer;
+  color: var(--xr-font-color2);
+}
+
+.xr-section-item input:enabled + label:hover {
+  color: var(--xr-font-color0);
+}
+
+.xr-section-summary {
+  grid-column: 1;
+  color: var(--xr-font-color2);
+  font-weight: 500;
+}
+
+.xr-section-summary > span {
+  display: inline-block;
+  padding-left: 0.5em;
+}
+
+.xr-section-summary-in:disabled + label {
+  color: var(--xr-font-color2);
+}
+
+.xr-section-summary-in + label:before {
+  display: inline-block;
+  content: '►';
+  font-size: 11px;
+  width: 15px;
+  text-align: center;
+}
+
+.xr-section-summary-in:disabled + label:before {
+  color: var(--xr-disabled-color);
+}
+
+.xr-section-summary-in:checked + label:before {
+  content: '▼';
+}
+
+.xr-section-summary-in:checked + label > span {
+  display: none;
+}
+
+.xr-section-summary,
+.xr-section-inline-details {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.xr-section-inline-details {
+  grid-column: 2 / -1;
+}
+
+.xr-section-details {
+  display: none;
+  grid-column: 1 / -1;
+  margin-bottom: 5px;
+}
+
+.xr-section-summary-in:checked ~ .xr-section-details {
+  display: contents;
+}
+
+.xr-array-wrap {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 20px auto;
+}
+
+.xr-array-wrap > label {
+  grid-column: 1;
+  vertical-align: top;
+}
+
+.xr-preview {
+  color: var(--xr-font-color3);
+}
+
+.xr-array-preview,
+.xr-array-data {
+  padding: 0 5px !important;
+  grid-column: 2;
+}
+
+.xr-array-data,
+.xr-array-in:checked ~ .xr-array-preview {
+  display: none;
+}
+
+.xr-array-in:checked ~ .xr-array-data,
+.xr-array-preview {
+  display: inline-block;
+}
+
+.xr-dim-list {
+  display: inline-block !important;
+  list-style: none;
+  padding: 0 !important;
+  margin: 0;
+}
+
+.xr-dim-list li {
+  display: inline-block;
+  padding: 0;
+  margin: 0;
+}
+
+.xr-dim-list:before {
+  content: '(';
+}
+
+.xr-dim-list:after {
+  content: ')';
+}
+
+.xr-dim-list li:not(:last-child):after {
+  content: ',';
+  padding-right: 5px;
+}
+
+.xr-has-index {
+  font-weight: bold;
+}
+
+.xr-var-list,
+.xr-var-item {
+  display: contents;
+}
+
+.xr-var-item > div,
+.xr-var-item label,
+.xr-var-item > .xr-var-name span {
+  background-color: var(--xr-background-color-row-even);
+  margin-bottom: 0;
+}
+
+.xr-var-item > .xr-var-name:hover span {
+  padding-right: 5px;
+}
+
+.xr-var-list > li:nth-child(odd) > div,
+.xr-var-list > li:nth-child(odd) > label,
+.xr-var-list > li:nth-child(odd) > .xr-var-name span {
+  background-color: var(--xr-background-color-row-odd);
+}
+
+.xr-var-name {
+  grid-column: 1;
+}
+
+.xr-var-dims {
+  grid-column: 2;
+}
+
+.xr-var-dtype {
+  grid-column: 3;
+  text-align: right;
+  color: var(--xr-font-color2);
+}
+
+.xr-var-preview {
+  grid-column: 4;
+}
+
+.xr-var-name,
+.xr-var-dims,
+.xr-var-dtype,
+.xr-preview,
+.xr-attrs dt {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 10px;
+}
+
+.xr-var-name:hover,
+.xr-var-dims:hover,
+.xr-var-dtype:hover,
+.xr-attrs dt:hover {
+  overflow: visible;
+  width: auto;
+  z-index: 1;
+}
+
+.xr-var-attrs,
+.xr-var-data {
+  display: none;
+  background-color: var(--xr-background-color) !important;
+  padding-bottom: 5px !important;
+}
+
+.xr-var-attrs-in:checked ~ .xr-var-attrs,
+.xr-var-data-in:checked ~ .xr-var-data {
+  display: block;
+}
+
+.xr-var-data > table {
+  float: right;
+}
+
+.xr-var-name span,
+.xr-var-data,
+.xr-attrs {
+  padding-left: 25px !important;
+}
+
+.xr-attrs,
+.xr-var-attrs,
+.xr-var-data {
+  grid-column: 1 / -1;
+}
+
+dl.xr-attrs {
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: 125px auto;
+}
+
+.xr-attrs dt,
+.xr-attrs dd {
+  padding: 0;
+  margin: 0;
+  float: left;
+  padding-right: 10px;
+  width: auto;
+}
+
+.xr-attrs dt {
+  font-weight: normal;
+  grid-column: 1;
+}
+
+.xr-attrs dt:hover span {
+  display: inline-block;
+  background: var(--xr-background-color);
+  padding-right: 10px;
+}
+
+.xr-attrs dd {
+  grid-column: 2;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.xr-icon-database,
+.xr-icon-file-text2 {
+  display: inline-block;
+  vertical-align: middle;
+  width: 1em;
+  height: 1.5em !important;
+  stroke-width: 0;
+  stroke: currentColor;
+  fill: currentColor;
+}
+</style><pre class='xr-text-repr-fallback'>&lt;xarray.Dataset&gt;
+Dimensions:  ()
+Data variables:
+    a        float64 1.008
+    b        float64 1.006
+    σ        float64 1.003</pre><div class='xr-wrap' hidden><div class='xr-header'><div class='xr-obj-type'>xarray.Dataset</div></div><ul class='xr-sections'><li class='xr-section-item'><input id='section-d9e06707-038b-4547-aa09-f1cf96a4318a' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-d9e06707-038b-4547-aa09-f1cf96a4318a' class='xr-section-summary'  title='Expand/collapse section'>Dimensions:</label><div class='xr-section-inline-details'></div><div class='xr-section-details'></div></li><li class='xr-section-item'><input id='section-afd5b947-fc86-488c-993c-ed479c22e3e0' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-afd5b947-fc86-488c-993c-ed479c22e3e0' class='xr-section-summary'  title='Expand/collapse section'>Coordinates: <span>(0)</span></label><div class='xr-section-inline-details'></div><div class='xr-section-details'><ul class='xr-var-list'></ul></div></li><li class='xr-section-item'><input id='section-2eb92c91-1d1d-4091-92a8-510f97f64f02' class='xr-section-summary-in' type='checkbox'  checked><label for='section-2eb92c91-1d1d-4091-92a8-510f97f64f02' class='xr-section-summary' >Data variables: <span>(3)</span></label><div class='xr-section-inline-details'></div><div class='xr-section-details'><ul class='xr-var-list'><li class='xr-var-item'><div class='xr-var-name'><span>a</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.008</div><input id='attrs-f5a1c8f7-526e-42bf-8395-82c7d65893e0' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-f5a1c8f7-526e-42bf-8395-82c7d65893e0' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-000f63d2-b8b9-4cf2-895a-4975bb34a926' class='xr-var-data-in' type='checkbox'><label for='data-000f63d2-b8b9-4cf2-895a-4975bb34a926' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.00765472)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>b</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.006</div><input id='attrs-19ae3b16-7c53-411f-83f0-85927783274e' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-19ae3b16-7c53-411f-83f0-85927783274e' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-aaec7ffc-0f99-49c9-82d0-62f746b4eb58' class='xr-var-data-in' type='checkbox'><label for='data-aaec7ffc-0f99-49c9-82d0-62f746b4eb58' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.00622094)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>σ</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.003</div><input id='attrs-f0e8ab0c-5ff7-4eb3-9e57-61767b7163d7' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-f0e8ab0c-5ff7-4eb3-9e57-61767b7163d7' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-4b49b11e-b070-47ba-9498-ea18a0051736' class='xr-var-data-in' type='checkbox'><label for='data-4b49b11e-b070-47ba-9498-ea18a0051736' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.00281897)</pre></div></li></ul></div></li><li class='xr-section-item'><input id='section-655ba6c6-33eb-47dd-9d60-e57af97dca0b' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-655ba6c6-33eb-47dd-9d60-e57af97dca0b' class='xr-section-summary'  title='Expand/collapse section'>Attributes: <span>(0)</span></label><div class='xr-section-inline-details'></div><div class='xr-section-details'><dl class='xr-attrs'></dl></div></li></ul></div></div>
+
+
+
+The Gelman-Rubin statistics for each parameter are acceptable (smaller than 1.05) as well.
+
+We now draw samples from the posterior predictive distribution of $Y$. First we build a grid for $x$ (`pp_log_age`) and $j$ (`pp_taxon_id`) that span the observed range of these quantities in the data.
+
+
+```python
+pp_log_age = np.repeat(np.linspace(0, np.log(30)), n_taxon)
+pp_taxon_id = np.tile(np.arange(n_taxon), pp_log_age.size // n_taxon)
+```
+
+Now we sample from the posterior predictive distribution.
+
+
+```python
+ALPHA = 0.05
+```
+
+
+```python
+def get_pp_df(model, trace, alpha=ALPHA):
+    taxon_id_.set_value(pp_taxon_id)
+    log_age_.set_value(pp_log_age)
+    
+    with model:
+        pp_trace = pm.sample_posterior_predictive(trace)
+        
+    taxon_id_.set_value(taxon_id)
+    log_age_.set_value(log_age)
+        
+    return pd.DataFrame({
+        'age': np.exp(pp_log_age),
+        'taxon_id': pp_taxon_id,
+        'pp_mean': np.exp(pp_trace['obs'].mean(axis=0)),
+        'pp_low': np.exp(np.percentile(pp_trace['obs'], 100 * alpha / 2., axis=0)),
+        'pp_high': np.exp(np.percentile(pp_trace['obs'], 100 * (1 - alpha / 2.), axis=0))
+    })
+```
+
+Note the lines in `get_pp_df` where we change the values of the `shared` variables `taxon_id_` and `log_age_` to their posterior predictive grid values before sampling and back to the observed values after sampling.
+
+
+```python
+pp_loglin_df = get_pp_df(loglin_model, loglin_trace)
+```
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='6000' class='' max='6000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [6000/6000 00:31<00:00]
+</div>
+
+
+
+
+```python
+pp_loglin_df.head()
+```
+
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+    vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+    vertical-align: top;
+}
+
+.dataframe thead th {
+    text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+  <th></th>
+  <th>age</th>
+  <th>taxon_id</th>
+  <th>pp_mean</th>
+  <th>pp_low</th>
+  <th>pp_high</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <th>0</th>
+  <td>1.000000</td>
+  <td>0</td>
+  <td>19.767345</td>
+  <td>7.513964</td>
+  <td>44.358809</td>
+</tr>
+<tr>
+  <th>1</th>
+  <td>1.000000</td>
+  <td>1</td>
+  <td>3.751587</td>
+  <td>0.029910</td>
+  <td>96.423621</td>
+</tr>
+<tr>
+  <th>2</th>
+  <td>1.000000</td>
+  <td>2</td>
+  <td>8.544977</td>
+  <td>2.598875</td>
+  <td>22.385467</td>
+</tr>
+<tr>
+  <th>3</th>
+  <td>1.000000</td>
+  <td>3</td>
+  <td>7.263371</td>
+  <td>2.957169</td>
+  <td>17.696855</td>
+</tr>
+<tr>
+  <th>4</th>
+  <td>1.071878</td>
+  <td>0</td>
+  <td>21.720457</td>
+  <td>8.950703</td>
+  <td>48.788518</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<br>
+
+
+Finally, after all of this preparatory work, we get to the payoff and plot the posterior predictive means and intervals for each taxon across our grid.
+
+
+```python
+def make_posterior_mean_label(name):
+    return "Posterior mean" if name is None else f"{name}\nposterior mean"
+
+def make_posterior_interval_label(name):
+    return "95% interval" if name is None else f"{name}\n95% interval"
+
+def plot_taxon_posterior(taxon, df, pp_df,
+                         name=None, plot_data=True,
+                         legend=True, ax=None):
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+    ax.fill_between(pp_df['age'], pp_df['pp_low'], pp_df['pp_high'],
+                    alpha=0.25, label=make_posterior_interval_label(name));
+    pp_df.plot('age', 'pp_mean', label=make_posterior_mean_label(name), ax=ax)
+
+    if plot_data:
+        df.plot.scatter('age', 'mass', c='C0', label="Data", ax=ax)
+    
+    ax.set_title(taxon)
+
+    if legend:
+        ax.legend(loc=2)
+    else:
+        ax.get_legend().remove()
+        
+    return ax
+```
+
+
+```python
+FIGSIZE = (12, 9)
+```
+
+
+```python
+def plot_pp_by_taxon(pp_df,
+                     name=None, plot_data=True,
+                     fig=None, axes=None, figsize=FIGSIZE):
+    if fig is None or axes is None:
+        fig, axes = plt.subplots(nrows=2, ncols=2, sharex=True, sharey=True, figsize=figsize)
+
+    for plt_taxon_id, ax in enumerate(axes.flatten()):
+        taxon = taxon_map[plt_taxon_id]
+        taxon_df = df[taxon_id == plt_taxon_id]
+        taxon_pp_df = pp_df[pp_df['taxon_id'] == plt_taxon_id]
+
+        plot_taxon_posterior(taxon, taxon_df, taxon_pp_df,
+                             name=name, plot_data=plot_data,
+                             legend=(plt_taxon_id == 0), ax=ax)
+        ax.set_xlim(right=30)
+        ax.set_ylim(top=6000)
+        
+    return fig, axes
+```
+
+
+```python
+plot_pp_by_taxon(pp_loglin_df);
+```
+
+
+<center>![png](/resources/tyrannosaurid/Growth%20Curves%20REPARAM_44_0.png)</center>
+
+
+Visually comparing these plots to the corresponding ones in the worked JAGS example shows reasonable agreement in spite of our slightly different prior specification.
+
+### Pooled log-linear model
+
+It is quite noticeable that in the above posterior predictive plots that the credible intervals are wider for taxa that have fewer data points. In particular there are only three samples of taxon Daspletosaurus. A hierarchical model will allow us to share information from taxa with more observations when inferring the posterior distributions of parameters for taxa with fewer observations.  This information sharing leads to the use of the term "pooled" for this type of model.  The pooled log linear model still takes the form
+
+$$\log\left(f_j(X)\right) = a_j + b_j \log X,$$
+
+but uses different priors on $a_j$ and $b_j$.  Conceptually, the pooled model uses the priors
+
+$$
+\begin{align*}
+    \mu_a
+        & \sim N(0, 2.5^2) \\
+    \sigma_a
+        & \sim \textrm{HalfNormal}(2.5^2) \\
+    a_j
+        & \sim N(\mu_a, \sigma_a^2),
+\end{align*}
+$$
+
+and similarly for $b_j$.
+
+In reality, this intuitive parameterization can often present [computational challenges](https://twiecki.io/blog/2017/02/08/bayesian-hierchical-non-centered/), so we use the following non-centered parameterization instead.
+
+$$
+\begin{align*}
+    \mu_a
+        & \sim N(0, 2.5^2) \\
+    \Delta_{a_j}
+        & \sim N(0, 1) \\
+    \sigma_a
+        & \sim \textrm{HalfNormal}(2.5^2) \\
+    a_j
+        & = \mu_a + \Delta_{a_j} \cdot \sigma_a.
+\end{align*}
+$$
+
+
+```python
+def hierarchical_normal(name, shape):
+    μ = pm.Normal(f"μ_{name}", 0., 2.5)
+    Δ = pm.Normal(f"Δ_{name}", 0., 1., shape=shape)
+    σ = pm.HalfNormal(f"σ_{name}", 2.5)
+    
+    return pm.Deterministic(name, μ + Δ * σ)
+```
+
+
+```python
+with pm.Model() as pooled_loglin_model:
+    a = hierarchical_normal("a", n_taxon)
+    b = hierarchical_normal("b", n_taxon)
+```
+
+To further share information across taxa, we enforce the constraint that the noise parameters are identical across taxa, $\sigma_1 = \sigma_2 = \sigma_3 = \sigma_4 = \sigma$, with the prior $\sigma \sim \textrm{HalfNormal}(2.5^2)$.
+
+
+```python
+with pooled_loglin_model:
+    σ = pm.HalfNormal("σ", 2.5)
+    μ = a[taxon_id_] + b[taxon_id_] * log_age_ - 0.5 * σ**2
+
+    obs = pm.Normal("obs", μ, σ, observed=log_mass)
+```
+
+We now sample from the pooled log-linear model.
+
+
+```python
+with pooled_loglin_model:
+    pooled_loglin_trace = pm.sample(**SAMPLE_KWARGS)
+```
+
+    Auto-assigning NUTS sampler...
+    Initializing NUTS using jitter+adapt_diag...
+    Multiprocess sampling (3 chains in 3 jobs)
+    NUTS: [σ, σ_b, Δ_b, μ_b, σ_a, Δ_a, μ_a]
+
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='9000' class='' max='9000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [9000/9000 08:33<00:00 Sampling 3 chains, 0 divergences]
+</div>
+
+
+
+    Sampling 3 chains for 1_000 tune and 2_000 draw iterations (3_000 + 6_000 draws total) took 514 seconds.
+    The number of effective samples is smaller than 25% for some parameters.
+
+
+Again our diagnostics show no obvious cause for concern.
+
+
+```python
+az.plot_energy(pooled_loglin_trace);
+```
+
+
+<center>![png](/resources/tyrannosaurid/Growth%20Curves%20REPARAM_54_0.png)</center>
+
+
+
+```python
+az.rhat(pooled_loglin_trace).max()
+```
+
+
+
+
+<div><svg style="position: absolute; width: 0; height: 0; overflow: hidden">
+<defs>
+<symbol id="icon-database" viewBox="0 0 32 32">
+<path d="M16 0c-8.837 0-16 2.239-16 5v4c0 2.761 7.163 5 16 5s16-2.239 16-5v-4c0-2.761-7.163-5-16-5z"></path>
+<path d="M16 17c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path>
+<path d="M16 26c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path>
+</symbol>
+<symbol id="icon-file-text2" viewBox="0 0 32 32">
+<path d="M28.681 7.159c-0.694-0.947-1.662-2.053-2.724-3.116s-2.169-2.030-3.116-2.724c-1.612-1.182-2.393-1.319-2.841-1.319h-15.5c-1.378 0-2.5 1.121-2.5 2.5v27c0 1.378 1.122 2.5 2.5 2.5h23c1.378 0 2.5-1.122 2.5-2.5v-19.5c0-0.448-0.137-1.23-1.319-2.841zM24.543 5.457c0.959 0.959 1.712 1.825 2.268 2.543h-4.811v-4.811c0.718 0.556 1.584 1.309 2.543 2.268zM28 29.5c0 0.271-0.229 0.5-0.5 0.5h-23c-0.271 0-0.5-0.229-0.5-0.5v-27c0-0.271 0.229-0.5 0.5-0.5 0 0 15.499-0 15.5 0v7c0 0.552 0.448 1 1 1h7v19.5z"></path>
+<path d="M23 26h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path>
+<path d="M23 22h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path>
+<path d="M23 18h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path>
+</symbol>
+</defs>
+</svg>
+<style>/* CSS stylesheet for displaying xarray objects in jupyterlab.
+ *
+ */
+
+:root {
+  --xr-font-color0: var(--jp-content-font-color0, rgba(0, 0, 0, 1));
+  --xr-font-color2: var(--jp-content-font-color2, rgba(0, 0, 0, 0.54));
+  --xr-font-color3: var(--jp-content-font-color3, rgba(0, 0, 0, 0.38));
+  --xr-border-color: var(--jp-border-color2, #e0e0e0);
+  --xr-disabled-color: var(--jp-layout-color3, #bdbdbd);
+  --xr-background-color: var(--jp-layout-color0, white);
+  --xr-background-color-row-even: var(--jp-layout-color1, white);
+  --xr-background-color-row-odd: var(--jp-layout-color2, #eeeeee);
+}
+
+html[theme=dark],
+body.vscode-dark {
+  --xr-font-color0: rgba(255, 255, 255, 1);
+  --xr-font-color2: rgba(255, 255, 255, 0.54);
+  --xr-font-color3: rgba(255, 255, 255, 0.38);
+  --xr-border-color: #1F1F1F;
+  --xr-disabled-color: #515151;
+  --xr-background-color: #111111;
+  --xr-background-color-row-even: #111111;
+  --xr-background-color-row-odd: #313131;
+}
+
+.xr-wrap {
+  display: block;
+  min-width: 300px;
+  max-width: 700px;
+}
+
+.xr-text-repr-fallback {
+  /* fallback to plain text repr when CSS is not injected (untrusted notebook) */
+  display: none;
+}
+
+.xr-header {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  border-bottom: solid 1px var(--xr-border-color);
+}
+
+.xr-header > div,
+.xr-header > ul {
+  display: inline;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.xr-obj-type,
+.xr-array-name {
+  margin-left: 2px;
+  margin-right: 10px;
+}
+
+.xr-obj-type {
+  color: var(--xr-font-color2);
+}
+
+.xr-sections {
+  padding-left: 0 !important;
+  display: grid;
+  grid-template-columns: 150px auto auto 1fr 20px 20px;
+}
+
+.xr-section-item {
+  display: contents;
+}
+
+.xr-section-item input {
+  display: none;
+}
+
+.xr-section-item input + label {
+  color: var(--xr-disabled-color);
+}
+
+.xr-section-item input:enabled + label {
+  cursor: pointer;
+  color: var(--xr-font-color2);
+}
+
+.xr-section-item input:enabled + label:hover {
+  color: var(--xr-font-color0);
+}
+
+.xr-section-summary {
+  grid-column: 1;
+  color: var(--xr-font-color2);
+  font-weight: 500;
+}
+
+.xr-section-summary > span {
+  display: inline-block;
+  padding-left: 0.5em;
+}
+
+.xr-section-summary-in:disabled + label {
+  color: var(--xr-font-color2);
+}
+
+.xr-section-summary-in + label:before {
+  display: inline-block;
+  content: '►';
+  font-size: 11px;
+  width: 15px;
+  text-align: center;
+}
+
+.xr-section-summary-in:disabled + label:before {
+  color: var(--xr-disabled-color);
+}
+
+.xr-section-summary-in:checked + label:before {
+  content: '▼';
+}
+
+.xr-section-summary-in:checked + label > span {
+  display: none;
+}
+
+.xr-section-summary,
+.xr-section-inline-details {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.xr-section-inline-details {
+  grid-column: 2 / -1;
+}
+
+.xr-section-details {
+  display: none;
+  grid-column: 1 / -1;
+  margin-bottom: 5px;
+}
+
+.xr-section-summary-in:checked ~ .xr-section-details {
+  display: contents;
+}
+
+.xr-array-wrap {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 20px auto;
+}
+
+.xr-array-wrap > label {
+  grid-column: 1;
+  vertical-align: top;
+}
+
+.xr-preview {
+  color: var(--xr-font-color3);
+}
+
+.xr-array-preview,
+.xr-array-data {
+  padding: 0 5px !important;
+  grid-column: 2;
+}
+
+.xr-array-data,
+.xr-array-in:checked ~ .xr-array-preview {
+  display: none;
+}
+
+.xr-array-in:checked ~ .xr-array-data,
+.xr-array-preview {
+  display: inline-block;
+}
+
+.xr-dim-list {
+  display: inline-block !important;
+  list-style: none;
+  padding: 0 !important;
+  margin: 0;
+}
+
+.xr-dim-list li {
+  display: inline-block;
+  padding: 0;
+  margin: 0;
+}
+
+.xr-dim-list:before {
+  content: '(';
+}
+
+.xr-dim-list:after {
+  content: ')';
+}
+
+.xr-dim-list li:not(:last-child):after {
+  content: ',';
+  padding-right: 5px;
+}
+
+.xr-has-index {
+  font-weight: bold;
+}
+
+.xr-var-list,
+.xr-var-item {
+  display: contents;
+}
+
+.xr-var-item > div,
+.xr-var-item label,
+.xr-var-item > .xr-var-name span {
+  background-color: var(--xr-background-color-row-even);
+  margin-bottom: 0;
+}
+
+.xr-var-item > .xr-var-name:hover span {
+  padding-right: 5px;
+}
+
+.xr-var-list > li:nth-child(odd) > div,
+.xr-var-list > li:nth-child(odd) > label,
+.xr-var-list > li:nth-child(odd) > .xr-var-name span {
+  background-color: var(--xr-background-color-row-odd);
+}
+
+.xr-var-name {
+  grid-column: 1;
+}
+
+.xr-var-dims {
+  grid-column: 2;
+}
+
+.xr-var-dtype {
+  grid-column: 3;
+  text-align: right;
+  color: var(--xr-font-color2);
+}
+
+.xr-var-preview {
+  grid-column: 4;
+}
+
+.xr-var-name,
+.xr-var-dims,
+.xr-var-dtype,
+.xr-preview,
+.xr-attrs dt {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 10px;
+}
+
+.xr-var-name:hover,
+.xr-var-dims:hover,
+.xr-var-dtype:hover,
+.xr-attrs dt:hover {
+  overflow: visible;
+  width: auto;
+  z-index: 1;
+}
+
+.xr-var-attrs,
+.xr-var-data {
+  display: none;
+  background-color: var(--xr-background-color) !important;
+  padding-bottom: 5px !important;
+}
+
+.xr-var-attrs-in:checked ~ .xr-var-attrs,
+.xr-var-data-in:checked ~ .xr-var-data {
+  display: block;
+}
+
+.xr-var-data > table {
+  float: right;
+}
+
+.xr-var-name span,
+.xr-var-data,
+.xr-attrs {
+  padding-left: 25px !important;
+}
+
+.xr-attrs,
+.xr-var-attrs,
+.xr-var-data {
+  grid-column: 1 / -1;
+}
+
+dl.xr-attrs {
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: 125px auto;
+}
+
+.xr-attrs dt,
+.xr-attrs dd {
+  padding: 0;
+  margin: 0;
+  float: left;
+  padding-right: 10px;
+  width: auto;
+}
+
+.xr-attrs dt {
+  font-weight: normal;
+  grid-column: 1;
+}
+
+.xr-attrs dt:hover span {
+  display: inline-block;
+  background: var(--xr-background-color);
+  padding-right: 10px;
+}
+
+.xr-attrs dd {
+  grid-column: 2;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.xr-icon-database,
+.xr-icon-file-text2 {
+  display: inline-block;
+  vertical-align: middle;
+  width: 1em;
+  height: 1.5em !important;
+  stroke-width: 0;
+  stroke: currentColor;
+  fill: currentColor;
+}
+</style><pre class='xr-text-repr-fallback'>&lt;xarray.Dataset&gt;
+Dimensions:  ()
+Data variables:
+    μ_a      float64 1.002
+    Δ_a      float64 1.002
+    μ_b      float64 1.0
+    Δ_b      float64 1.001
+    σ_a      float64 1.002
+    a        float64 1.002
+    σ_b      float64 1.004
+    b        float64 1.002
+    σ        float64 1.006</pre><div class='xr-wrap' hidden><div class='xr-header'><div class='xr-obj-type'>xarray.Dataset</div></div><ul class='xr-sections'><li class='xr-section-item'><input id='section-3c17eb08-6762-42b7-b4bf-f54bd2a01e36' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-3c17eb08-6762-42b7-b4bf-f54bd2a01e36' class='xr-section-summary'  title='Expand/collapse section'>Dimensions:</label><div class='xr-section-inline-details'></div><div class='xr-section-details'></div></li><li class='xr-section-item'><input id='section-7ed7a115-a843-48eb-986b-a302a247aec5' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-7ed7a115-a843-48eb-986b-a302a247aec5' class='xr-section-summary'  title='Expand/collapse section'>Coordinates: <span>(0)</span></label><div class='xr-section-inline-details'></div><div class='xr-section-details'><ul class='xr-var-list'></ul></div></li><li class='xr-section-item'><input id='section-02f91719-e66f-40a9-b6a0-c00a59519052' class='xr-section-summary-in' type='checkbox'  checked><label for='section-02f91719-e66f-40a9-b6a0-c00a59519052' class='xr-section-summary' >Data variables: <span>(9)</span></label><div class='xr-section-inline-details'></div><div class='xr-section-details'><ul class='xr-var-list'><li class='xr-var-item'><div class='xr-var-name'><span>μ_a</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.002</div><input id='attrs-783bd763-2207-4a57-8294-36d92c44e147' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-783bd763-2207-4a57-8294-36d92c44e147' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-19bc9785-67c4-4ef1-a549-cc0ffd213b62' class='xr-var-data-in' type='checkbox'><label for='data-19bc9785-67c4-4ef1-a549-cc0ffd213b62' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.00208566)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>Δ_a</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.002</div><input id='attrs-460d97b2-4b7a-4506-ba44-7b95f06d5df9' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-460d97b2-4b7a-4506-ba44-7b95f06d5df9' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-3926da15-bc20-4bf7-9726-ded6ad7fa50a' class='xr-var-data-in' type='checkbox'><label for='data-3926da15-bc20-4bf7-9726-ded6ad7fa50a' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.00184228)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>μ_b</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.0</div><input id='attrs-3f8fc75d-29b7-4a05-b5a2-40d8c1dac4eb' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-3f8fc75d-29b7-4a05-b5a2-40d8c1dac4eb' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-b890c5ff-8493-4852-81e0-b4653469b4ba' class='xr-var-data-in' type='checkbox'><label for='data-b890c5ff-8493-4852-81e0-b4653469b4ba' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.00044944)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>Δ_b</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.001</div><input id='attrs-f223db23-a2da-42be-9a01-c0b4b5ec5580' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-f223db23-a2da-42be-9a01-c0b4b5ec5580' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-a92d9930-694a-4a42-a044-0ec3198c4883' class='xr-var-data-in' type='checkbox'><label for='data-a92d9930-694a-4a42-a044-0ec3198c4883' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.00108353)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>σ_a</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.002</div><input id='attrs-dc339d99-92e8-4ab0-8410-8d5bd3527f32' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-dc339d99-92e8-4ab0-8410-8d5bd3527f32' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-f52122f2-9c8c-4c11-84b7-3c237ec81fd1' class='xr-var-data-in' type='checkbox'><label for='data-f52122f2-9c8c-4c11-84b7-3c237ec81fd1' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.00158498)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>a</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.002</div><input id='attrs-50777a4c-8978-4b46-b9a0-4f92d1501ba9' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-50777a4c-8978-4b46-b9a0-4f92d1501ba9' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-bd7e1df4-c2d5-44e4-8f27-060756144a85' class='xr-var-data-in' type='checkbox'><label for='data-bd7e1df4-c2d5-44e4-8f27-060756144a85' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.00175827)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>σ_b</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.004</div><input id='attrs-d9fb1fd2-cf37-4ec7-9d86-c6f539f6b9f4' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-d9fb1fd2-cf37-4ec7-9d86-c6f539f6b9f4' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-87934b62-deda-4ac4-a3be-a4ea1786548a' class='xr-var-data-in' type='checkbox'><label for='data-87934b62-deda-4ac4-a3be-a4ea1786548a' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.00390892)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>b</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.002</div><input id='attrs-d0d5f26f-aa11-4d68-95dd-7238ac72eeef' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-d0d5f26f-aa11-4d68-95dd-7238ac72eeef' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-183e7681-71b9-45fc-9ac4-3912a45cbaf8' class='xr-var-data-in' type='checkbox'><label for='data-183e7681-71b9-45fc-9ac4-3912a45cbaf8' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.00210233)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>σ</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.006</div><input id='attrs-11b31e7e-8d19-4ff1-8459-a0aa0c70ce9b' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-11b31e7e-8d19-4ff1-8459-a0aa0c70ce9b' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-4b7e5eb5-8ceb-4550-80ac-85208e655e2c' class='xr-var-data-in' type='checkbox'><label for='data-4b7e5eb5-8ceb-4550-80ac-85208e655e2c' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.00598006)</pre></div></li></ul></div></li><li class='xr-section-item'><input id='section-4774587e-f5da-493a-9b40-8ae8a707171f' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-4774587e-f5da-493a-9b40-8ae8a707171f' class='xr-section-summary'  title='Expand/collapse section'>Attributes: <span>(0)</span></label><div class='xr-section-inline-details'></div><div class='xr-section-details'><dl class='xr-attrs'></dl></div></li></ul></div></div>
+
+
+
+Again we sample from the posterior predictive distribution of this model and plot the results.
+
+
+```python
+pp_pooled_loglin_df = get_pp_df(pooled_loglin_model, pooled_loglin_trace)
+```
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='6000' class='' max='6000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [6000/6000 00:52<00:00]
+</div>
+
+
+
+
+```python
+pp_pooled_loglin_df.head()
+```
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>age</th>
+<th>taxon_id</th>
+<th>pp_mean</th>
+<th>pp_low</th>
+<th>pp_high</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>0</th>
+<td>1.000000</td>
+<td>0</td>
+<td>17.405405</td>
+<td>9.378821</td>
+<td>30.602004</td>
+</tr>
+<tr>
+<th>1</th>
+<td>1.000000</td>
+<td>1</td>
+<td>9.940230</td>
+<td>3.453810</td>
+<td>27.524651</td>
+</tr>
+<tr>
+<th>2</th>
+<td>1.000000</td>
+<td>2</td>
+<td>9.484354</td>
+<td>4.619197</td>
+<td>18.747739</td>
+</tr>
+<tr>
+<th>3</th>
+<td>1.000000</td>
+<td>3</td>
+<td>8.394668</td>
+<td>4.823675</td>
+<td>15.338217</td>
+</tr>
+<tr>
+<th>4</th>
+<td>1.071878</td>
+<td>0</td>
+<td>19.095916</td>
+<td>10.369680</td>
+<td>33.178229</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<br>
+
+
+
+```python
+plot_pp_by_taxon(pp_pooled_loglin_df);
+```
+
+
+<center>![png](/resources/tyrannosaurid/Growth%20Curves%20REPARAM_59_0.png)</center>
+
+
+Visually, each of the credible intervals appears smaller than for the unpooled model, espescially for Daspletosaurus.  We can overlay the posterior predictive plots for the unpooled and pooled log-linear models to confirm this observation.
+
+
+```python
+fig, axes = plot_pp_by_taxon(pp_loglin_df, plot_data=False, name="Unpooled log-linear")
+plot_pp_by_taxon(pp_pooled_loglin_df,
+                 name="Pooled log-linear",
+                 fig=fig, axes=axes);
+```
+
+
+<center>![png](/resources/tyrannosaurid/Growth%20Curves%20REPARAM_61_0.png)</center>
+
+
+### Unpooled logistic model
+
+While the log-linear models are reasonable given our exploratory data analysis above (and produce visually plausible results), they are physically unrealistic. With a log-linear model, as the dinosaur gets older its mass will increase without bound.  In reality, living creatures have a maximum lifespan, so the log-linear model may be reasonable for realistic ages.  Nevertheless, we can incorporate upper bounds on mass by using a [logistic function](https://en.wikipedia.org/wiki/Logistic_function) for $f_j$,
+
+$$f_j(x) = a_j + \frac{b_j}{1 + \exp\left(-(x - c_j)\ /\ d_j\right)}$$
+
+
+```python
+def logistic(x, a, b, c, d, tensor=False):
+    exp = at.exp if tensor else np.exp
+        
+    return a + b / (1. + exp(-(x - c) / d))
+
+def inv_logistic(y, a, b, c, d, tensor=False):
+    log = at.log if tensor else np.log
+    
+    return c - d * log(b / (y - a) - 1)
+```
+
+Note that `logistic` and its inverse function, `inv_logistic`, switch between the `aesera` and `numpy` implementations of `exp` and `log` depending on the `tensor` parameter.
+
+
+```python
+fig, ax = plt.subplots(figsize=(8, 6))
+
+A, B, C, D = 1, 5, 10, 3
+
+f = lambda x: logistic(x, A, B, C, D)
+f_inv = lambda y: inv_logistic(y, A, B, C, D)
+
+X_MAX = f_inv(A + B - 0.01)
+logistic_x = np.linspace(0, X_MAX)
+
+ax.plot(logistic_x, f(logistic_x));
+
+ax.set_xlim(0, X_MAX);
+
+ax.set_yticks([0, f(0), f(2 * X_MAX)]);
+ax.set_yticklabels(["0", r"$f(0)$",
+                    r"$\lim_{x \to \infty}\ f(x)$"]);
+
+ax.set_title(f"Logistic function $f$ with\n$a =${A}, $b =${B}, $c =${C}, $d =${D}");
+```
+
+
+<center>![png](/resources/tyrannosaurid/Growth%20Curves%20REPARAM_66_0.png)</center>
+
+
+We require $a, b, d > 0$, so we set
+
+$$
+\begin{align*}
+    a_j
+        & = \exp \alpha_j \\
+    b_j
+        & = \exp \beta_j \\
+    d_j
+        & = \exp \delta_j.
+\end{align*}
+$$
+
+For the unpooled logistic model we use $\alpha_j \sim N(0, 2.5^2)$ and similarly for $\beta_j$ and $\delta_j$.  We use the same prior for $c_j$ as in the unpooled log-linear model.
+
+
+```python
+with pm.Model() as logistic_model:
+    α = pm.Normal("α", 0., 2.5, shape=n_taxon)
+    a = pm.Deterministic("a", at.exp(α))
+    
+    β = pm.Normal("β", 0., 2.5, shape=n_taxon)
+    b = pm.Deterministic("b", at.exp(β))
+    
+    c = pm.Normal("c", 0., 2.5, shape=n_taxon)
+    
+    δ = pm.Normal("δ", 0., 2.5, shape=n_taxon)
+    d = pm.Deterministic("d", at.exp(δ))
+```
+
+The noise variance is also the same as in the unpooled log-linear model. The likelihood is quite similar as well.
+
+
+```python
+with logistic_model:
+    σ = pm.HalfNormal("σ", 2.5, shape=n_taxon)
+    μ = at.log(
+            logistic(log_age_,
+                     a[taxon_id_], b[taxon_id_], c[taxon_id_], d[taxon_id_],
+                     tensor=True)
+        ) - 0.5 * σ[taxon_id_]**2
+
+    obs = pm.Normal("obs", μ, σ[taxon_id_], observed=log_mass)
+```
+
+We now sample from the unpooled logistic model.
+
+
+```python
+with logistic_model:
+    logistic_trace = pm.sample(**SAMPLE_KWARGS)
+```
+
+    Auto-assigning NUTS sampler...
+    Initializing NUTS using jitter+adapt_diag...
+    Multiprocess sampling (3 chains in 3 jobs)
+    NUTS: [σ, δ, c, β, α]
+
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='9000' class='' max='9000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [9000/9000 09:42<00:00 Sampling 3 chains, 13 divergences]
+</div>
+
+
+
+    Sampling 3 chains for 1_000 tune and 2_000 draw iterations (3_000 + 6_000 draws total) took 583 seconds.
+    There were 2 divergences after tuning. Increase `target_accept` or reparameterize.
+    The chain reached the maximum tree depth. Increase max_treedepth, increase target_accept or reparameterize.
+    There were 6 divergences after tuning. Increase `target_accept` or reparameterize.
+    There were 5 divergences after tuning. Increase `target_accept` or reparameterize.
+    The estimated number of effective samples is smaller than 200 for some parameters.
+
+
+Again our diagnostics show no obvious cause for concern.
+
+
+```python
+az.plot_energy(logistic_trace);
+```
+
+
+<center>![png](/resources/tyrannosaurid/Growth%20Curves%20REPARAM_74_0.png)</center>
+
+
+
+```python
+az.rhat(logistic_trace).max()
+```
+
+
+
+
+<div><svg style="position: absolute; width: 0; height: 0; overflow: hidden">
+<defs>
+<symbol id="icon-database" viewBox="0 0 32 32">
+<path d="M16 0c-8.837 0-16 2.239-16 5v4c0 2.761 7.163 5 16 5s16-2.239 16-5v-4c0-2.761-7.163-5-16-5z"></path>
+<path d="M16 17c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path>
+<path d="M16 26c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path>
+</symbol>
+<symbol id="icon-file-text2" viewBox="0 0 32 32">
+<path d="M28.681 7.159c-0.694-0.947-1.662-2.053-2.724-3.116s-2.169-2.030-3.116-2.724c-1.612-1.182-2.393-1.319-2.841-1.319h-15.5c-1.378 0-2.5 1.121-2.5 2.5v27c0 1.378 1.122 2.5 2.5 2.5h23c1.378 0 2.5-1.122 2.5-2.5v-19.5c0-0.448-0.137-1.23-1.319-2.841zM24.543 5.457c0.959 0.959 1.712 1.825 2.268 2.543h-4.811v-4.811c0.718 0.556 1.584 1.309 2.543 2.268zM28 29.5c0 0.271-0.229 0.5-0.5 0.5h-23c-0.271 0-0.5-0.229-0.5-0.5v-27c0-0.271 0.229-0.5 0.5-0.5 0 0 15.499-0 15.5 0v7c0 0.552 0.448 1 1 1h7v19.5z"></path>
+<path d="M23 26h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path>
+<path d="M23 22h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path>
+<path d="M23 18h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path>
+</symbol>
+</defs>
+</svg>
+<style>/* CSS stylesheet for displaying xarray objects in jupyterlab.
+ *
+ */
+
+:root {
+  --xr-font-color0: var(--jp-content-font-color0, rgba(0, 0, 0, 1));
+  --xr-font-color2: var(--jp-content-font-color2, rgba(0, 0, 0, 0.54));
+  --xr-font-color3: var(--jp-content-font-color3, rgba(0, 0, 0, 0.38));
+  --xr-border-color: var(--jp-border-color2, #e0e0e0);
+  --xr-disabled-color: var(--jp-layout-color3, #bdbdbd);
+  --xr-background-color: var(--jp-layout-color0, white);
+  --xr-background-color-row-even: var(--jp-layout-color1, white);
+  --xr-background-color-row-odd: var(--jp-layout-color2, #eeeeee);
+}
+
+html[theme=dark],
+body.vscode-dark {
+  --xr-font-color0: rgba(255, 255, 255, 1);
+  --xr-font-color2: rgba(255, 255, 255, 0.54);
+  --xr-font-color3: rgba(255, 255, 255, 0.38);
+  --xr-border-color: #1F1F1F;
+  --xr-disabled-color: #515151;
+  --xr-background-color: #111111;
+  --xr-background-color-row-even: #111111;
+  --xr-background-color-row-odd: #313131;
+}
+
+.xr-wrap {
+  display: block;
+  min-width: 300px;
+  max-width: 700px;
+}
+
+.xr-text-repr-fallback {
+  /* fallback to plain text repr when CSS is not injected (untrusted notebook) */
+  display: none;
+}
+
+.xr-header {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  border-bottom: solid 1px var(--xr-border-color);
+}
+
+.xr-header > div,
+.xr-header > ul {
+  display: inline;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.xr-obj-type,
+.xr-array-name {
+  margin-left: 2px;
+  margin-right: 10px;
+}
+
+.xr-obj-type {
+  color: var(--xr-font-color2);
+}
+
+.xr-sections {
+  padding-left: 0 !important;
+  display: grid;
+  grid-template-columns: 150px auto auto 1fr 20px 20px;
+}
+
+.xr-section-item {
+  display: contents;
+}
+
+.xr-section-item input {
+  display: none;
+}
+
+.xr-section-item input + label {
+  color: var(--xr-disabled-color);
+}
+
+.xr-section-item input:enabled + label {
+  cursor: pointer;
+  color: var(--xr-font-color2);
+}
+
+.xr-section-item input:enabled + label:hover {
+  color: var(--xr-font-color0);
+}
+
+.xr-section-summary {
+  grid-column: 1;
+  color: var(--xr-font-color2);
+  font-weight: 500;
+}
+
+.xr-section-summary > span {
+  display: inline-block;
+  padding-left: 0.5em;
+}
+
+.xr-section-summary-in:disabled + label {
+  color: var(--xr-font-color2);
+}
+
+.xr-section-summary-in + label:before {
+  display: inline-block;
+  content: '►';
+  font-size: 11px;
+  width: 15px;
+  text-align: center;
+}
+
+.xr-section-summary-in:disabled + label:before {
+  color: var(--xr-disabled-color);
+}
+
+.xr-section-summary-in:checked + label:before {
+  content: '▼';
+}
+
+.xr-section-summary-in:checked + label > span {
+  display: none;
+}
+
+.xr-section-summary,
+.xr-section-inline-details {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.xr-section-inline-details {
+  grid-column: 2 / -1;
+}
+
+.xr-section-details {
+  display: none;
+  grid-column: 1 / -1;
+  margin-bottom: 5px;
+}
+
+.xr-section-summary-in:checked ~ .xr-section-details {
+  display: contents;
+}
+
+.xr-array-wrap {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 20px auto;
+}
+
+.xr-array-wrap > label {
+  grid-column: 1;
+  vertical-align: top;
+}
+
+.xr-preview {
+  color: var(--xr-font-color3);
+}
+
+.xr-array-preview,
+.xr-array-data {
+  padding: 0 5px !important;
+  grid-column: 2;
+}
+
+.xr-array-data,
+.xr-array-in:checked ~ .xr-array-preview {
+  display: none;
+}
+
+.xr-array-in:checked ~ .xr-array-data,
+.xr-array-preview {
+  display: inline-block;
+}
+
+.xr-dim-list {
+  display: inline-block !important;
+  list-style: none;
+  padding: 0 !important;
+  margin: 0;
+}
+
+.xr-dim-list li {
+  display: inline-block;
+  padding: 0;
+  margin: 0;
+}
+
+.xr-dim-list:before {
+  content: '(';
+}
+
+.xr-dim-list:after {
+  content: ')';
+}
+
+.xr-dim-list li:not(:last-child):after {
+  content: ',';
+  padding-right: 5px;
+}
+
+.xr-has-index {
+  font-weight: bold;
+}
+
+.xr-var-list,
+.xr-var-item {
+  display: contents;
+}
+
+.xr-var-item > div,
+.xr-var-item label,
+.xr-var-item > .xr-var-name span {
+  background-color: var(--xr-background-color-row-even);
+  margin-bottom: 0;
+}
+
+.xr-var-item > .xr-var-name:hover span {
+  padding-right: 5px;
+}
+
+.xr-var-list > li:nth-child(odd) > div,
+.xr-var-list > li:nth-child(odd) > label,
+.xr-var-list > li:nth-child(odd) > .xr-var-name span {
+  background-color: var(--xr-background-color-row-odd);
+}
+
+.xr-var-name {
+  grid-column: 1;
+}
+
+.xr-var-dims {
+  grid-column: 2;
+}
+
+.xr-var-dtype {
+  grid-column: 3;
+  text-align: right;
+  color: var(--xr-font-color2);
+}
+
+.xr-var-preview {
+  grid-column: 4;
+}
+
+.xr-var-name,
+.xr-var-dims,
+.xr-var-dtype,
+.xr-preview,
+.xr-attrs dt {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 10px;
+}
+
+.xr-var-name:hover,
+.xr-var-dims:hover,
+.xr-var-dtype:hover,
+.xr-attrs dt:hover {
+  overflow: visible;
+  width: auto;
+  z-index: 1;
+}
+
+.xr-var-attrs,
+.xr-var-data {
+  display: none;
+  background-color: var(--xr-background-color) !important;
+  padding-bottom: 5px !important;
+}
+
+.xr-var-attrs-in:checked ~ .xr-var-attrs,
+.xr-var-data-in:checked ~ .xr-var-data {
+  display: block;
+}
+
+.xr-var-data > table {
+  float: right;
+}
+
+.xr-var-name span,
+.xr-var-data,
+.xr-attrs {
+  padding-left: 25px !important;
+}
+
+.xr-attrs,
+.xr-var-attrs,
+.xr-var-data {
+  grid-column: 1 / -1;
+}
+
+dl.xr-attrs {
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: 125px auto;
+}
+
+.xr-attrs dt,
+.xr-attrs dd {
+  padding: 0;
+  margin: 0;
+  float: left;
+  padding-right: 10px;
+  width: auto;
+}
+
+.xr-attrs dt {
+  font-weight: normal;
+  grid-column: 1;
+}
+
+.xr-attrs dt:hover span {
+  display: inline-block;
+  background: var(--xr-background-color);
+  padding-right: 10px;
+}
+
+.xr-attrs dd {
+  grid-column: 2;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.xr-icon-database,
+.xr-icon-file-text2 {
+  display: inline-block;
+  vertical-align: middle;
+  width: 1em;
+  height: 1.5em !important;
+  stroke-width: 0;
+  stroke: currentColor;
+  fill: currentColor;
+}
+</style><pre class='xr-text-repr-fallback'>&lt;xarray.Dataset&gt;
+Dimensions:  ()
+Data variables:
+    α        float64 1.017
+    β        float64 1.02
+    c        float64 1.008
+    δ        float64 1.008
+    a        float64 1.017
+    b        float64 1.02
+    d        float64 1.014
+    σ        float64 1.024</pre><div class='xr-wrap' hidden><div class='xr-header'><div class='xr-obj-type'>xarray.Dataset</div></div><ul class='xr-sections'><li class='xr-section-item'><input id='section-92c50d4a-3728-4dee-b86d-921f41e51842' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-92c50d4a-3728-4dee-b86d-921f41e51842' class='xr-section-summary'  title='Expand/collapse section'>Dimensions:</label><div class='xr-section-inline-details'></div><div class='xr-section-details'></div></li><li class='xr-section-item'><input id='section-ee762fa9-244c-4fa3-bf51-f9dff5859490' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-ee762fa9-244c-4fa3-bf51-f9dff5859490' class='xr-section-summary'  title='Expand/collapse section'>Coordinates: <span>(0)</span></label><div class='xr-section-inline-details'></div><div class='xr-section-details'><ul class='xr-var-list'></ul></div></li><li class='xr-section-item'><input id='section-0d5788e1-87ff-4357-91b2-461f8875535f' class='xr-section-summary-in' type='checkbox'  checked><label for='section-0d5788e1-87ff-4357-91b2-461f8875535f' class='xr-section-summary' >Data variables: <span>(8)</span></label><div class='xr-section-inline-details'></div><div class='xr-section-details'><ul class='xr-var-list'><li class='xr-var-item'><div class='xr-var-name'><span>α</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.017</div><input id='attrs-11f895d9-4163-4cb1-91fe-987574607f7d' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-11f895d9-4163-4cb1-91fe-987574607f7d' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-9dcf24f0-8bca-423b-9892-e5eef76284d6' class='xr-var-data-in' type='checkbox'><label for='data-9dcf24f0-8bca-423b-9892-e5eef76284d6' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.01676666)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>β</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.02</div><input id='attrs-81740fa3-db8e-43bc-a4df-8492a06cc820' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-81740fa3-db8e-43bc-a4df-8492a06cc820' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-a6cceae8-c040-4867-a643-1f1f71d8c1f2' class='xr-var-data-in' type='checkbox'><label for='data-a6cceae8-c040-4867-a643-1f1f71d8c1f2' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.02040336)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>c</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.008</div><input id='attrs-5e574fb1-167c-4e84-8203-2ff3cc638e12' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-5e574fb1-167c-4e84-8203-2ff3cc638e12' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-426c8dce-acc8-4b49-a211-e5a91d86ba47' class='xr-var-data-in' type='checkbox'><label for='data-426c8dce-acc8-4b49-a211-e5a91d86ba47' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.00824226)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>δ</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.008</div><input id='attrs-9ba65b39-e61f-4d4b-a8b1-78a641e35086' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-9ba65b39-e61f-4d4b-a8b1-78a641e35086' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-157aad48-b087-4105-911b-516ba3736928' class='xr-var-data-in' type='checkbox'><label for='data-157aad48-b087-4105-911b-516ba3736928' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.00846537)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>a</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.017</div><input id='attrs-898ea623-045b-4a7a-8ba2-d0f8b97cf0a3' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-898ea623-045b-4a7a-8ba2-d0f8b97cf0a3' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-7c6aef96-11d7-4700-bba2-56ff5edee482' class='xr-var-data-in' type='checkbox'><label for='data-7c6aef96-11d7-4700-bba2-56ff5edee482' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.01676666)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>b</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.02</div><input id='attrs-ddaf7588-9c9d-4a94-9894-35483ed94ff6' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-ddaf7588-9c9d-4a94-9894-35483ed94ff6' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-fdd8c4db-f232-4717-92e1-103fe5ba4671' class='xr-var-data-in' type='checkbox'><label for='data-fdd8c4db-f232-4717-92e1-103fe5ba4671' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.02040336)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>d</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.014</div><input id='attrs-7de4b5e7-bddc-4a89-b74a-64c7a7212f7b' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-7de4b5e7-bddc-4a89-b74a-64c7a7212f7b' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-a991c9fa-9195-423f-add5-ae5d7b421e34' class='xr-var-data-in' type='checkbox'><label for='data-a991c9fa-9195-423f-add5-ae5d7b421e34' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.0135121)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>σ</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.024</div><input id='attrs-0a712318-2f17-44a5-a643-cb8942b0a1b1' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-0a712318-2f17-44a5-a643-cb8942b0a1b1' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-8f1c2c9e-03d9-408f-8776-8045ec4ba97f' class='xr-var-data-in' type='checkbox'><label for='data-8f1c2c9e-03d9-408f-8776-8045ec4ba97f' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.02389979)</pre></div></li></ul></div></li><li class='xr-section-item'><input id='section-ef8739ea-5e98-491a-8e5a-4c949f786e7e' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-ef8739ea-5e98-491a-8e5a-4c949f786e7e' class='xr-section-summary'  title='Expand/collapse section'>Attributes: <span>(0)</span></label><div class='xr-section-inline-details'></div><div class='xr-section-details'><dl class='xr-attrs'></dl></div></li></ul></div></div>
+
+
+
+Again we sample from the posterior predictive distribution of this model and plot the results.
+
+
+```python
+pp_logistic_df = get_pp_df(logistic_model, logistic_trace)
+```
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='6000' class='' max='6000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [6000/6000 00:35<00:00]
+</div>
+
+
+
+
+```python
+pp_logistic_df.head()
+```
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>age</th>
+<th>taxon_id</th>
+<th>pp_mean</th>
+<th>pp_low</th>
+<th>pp_high</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>0</th>
+<td>1.000000</td>
+<td>0</td>
+<td>20.229437</td>
+<td>0.655100</td>
+<td>809.706349</td>
+</tr>
+<tr>
+<th>1</th>
+<td>1.000000</td>
+<td>1</td>
+<td>372.903045</td>
+<td>0.370631</td>
+<td>5551.674728</td>
+</tr>
+<tr>
+<th>2</th>
+<td>1.000000</td>
+<td>2</td>
+<td>60.408886</td>
+<td>0.477719</td>
+<td>1983.882017</td>
+</tr>
+<tr>
+<th>3</th>
+<td>1.000000</td>
+<td>3</td>
+<td>11.421099</td>
+<td>1.119319</td>
+<td>53.975799</td>
+</tr>
+<tr>
+<th>4</th>
+<td>1.071878</td>
+<td>0</td>
+<td>21.909702</td>
+<td>0.812396</td>
+<td>642.989663</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<br>
+
+
+
+```python
+fig, axes = plot_pp_by_taxon(pp_loglin_df, name="Unpooled log-linear")
+plot_pp_by_taxon(pp_logistic_df,
+                 name="Unpooled logistic",
+                 fig=fig, axes=axes);
+```
+
+
+<center>![png](/resources/tyrannosaurid/Growth%20Curves%20REPARAM_79_0.png)</center>
+
+
+Interestingly, the posterior predictive mean for Daspletosaurus doesn't seem to fit the observed data as well as the log-linear model, and the credible intervals are quite wide.  This observation makes sense given that the logistic model has twice as many parameters, but the number of observations has remained the same.
+
+### Pooled logistic
+
+We can once again share information across taxa by specifying a pooled logistic model.  This model places hierarchical normal priors on $\alpha$, $\beta$, $c$, and $\delta$.
+
+
+```python
+with pm.Model() as pooled_logistic_model:
+    α = hierarchical_normal("α", n_taxon)
+    a = pm.Deterministic("a", at.exp(α))
+    
+    β = hierarchical_normal("β", n_taxon)
+    b = pm.Deterministic("b", at.exp(β))
+    
+    c = hierarchical_normal("c", n_taxon)
+    
+    δ = hierarchical_normal("δ", n_taxon)
+    d = pm.Deterministic("d", at.exp(δ))
+```
+
+The noise variance and likelihood are similar to those of the unpooled logistic model, except we constrain all taxa to share the same noise variance, $\sigma$, as in the pooled log-linear model.
+
+
+```python
+with pooled_logistic_model:
+    σ = pm.HalfNormal("σ", 2.5)
+    μ = at.log(
+            logistic(log_age_,
+                     a[taxon_id_], b[taxon_id_], c[taxon_id_], d[taxon_id_],
+                     tensor=True)
+        ) - 0.5 * σ**2
+
+    obs = pm.Normal("obs", μ, σ, observed=log_mass)
+```
+
+
+```python
+with pooled_logistic_model:
+    pooled_logistic_trace = pm.sample(**SAMPLE_KWARGS)
+```
+
+    Auto-assigning NUTS sampler...
+    Initializing NUTS using jitter+adapt_diag...
+    Multiprocess sampling (3 chains in 3 jobs)
+    NUTS: [σ, σ_δ, Δ_δ, μ_δ, σ_c, Δ_c, μ_c, σ_β, Δ_β, μ_β, σ_α, Δ_α, μ_α]
+
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='9000' class='' max='9000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [9000/9000 19:02<00:00 Sampling 3 chains, 3 divergences]
+</div>
+
+
+
+    Sampling 3 chains for 1_000 tune and 2_000 draw iterations (3_000 + 6_000 draws total) took 1143 seconds.
+    There were 2 divergences after tuning. Increase `target_accept` or reparameterize.
+    There was 1 divergence after tuning. Increase `target_accept` or reparameterize.
+
+
+Again our diagnostics show no obvious cause for concern.
+
+
+```python
+az.plot_energy(pooled_logistic_trace);
+```
+
+
+<center>![png](/resources/tyrannosaurid/Growth%20Curves%20REPARAM_87_0.png)</center>
+
+
+
+```python
+(az.rhat(pooled_logistic_trace['posterior'])
+   .max()
+   .to_array()
+   .max())
+```
+
+
+
+
+<div><svg style="position: absolute; width: 0; height: 0; overflow: hidden">
+<defs>
+<symbol id="icon-database" viewBox="0 0 32 32">
+<path d="M16 0c-8.837 0-16 2.239-16 5v4c0 2.761 7.163 5 16 5s16-2.239 16-5v-4c0-2.761-7.163-5-16-5z"></path>
+<path d="M16 17c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path>
+<path d="M16 26c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path>
+</symbol>
+<symbol id="icon-file-text2" viewBox="0 0 32 32">
+<path d="M28.681 7.159c-0.694-0.947-1.662-2.053-2.724-3.116s-2.169-2.030-3.116-2.724c-1.612-1.182-2.393-1.319-2.841-1.319h-15.5c-1.378 0-2.5 1.121-2.5 2.5v27c0 1.378 1.122 2.5 2.5 2.5h23c1.378 0 2.5-1.122 2.5-2.5v-19.5c0-0.448-0.137-1.23-1.319-2.841zM24.543 5.457c0.959 0.959 1.712 1.825 2.268 2.543h-4.811v-4.811c0.718 0.556 1.584 1.309 2.543 2.268zM28 29.5c0 0.271-0.229 0.5-0.5 0.5h-23c-0.271 0-0.5-0.229-0.5-0.5v-27c0-0.271 0.229-0.5 0.5-0.5 0 0 15.499-0 15.5 0v7c0 0.552 0.448 1 1 1h7v19.5z"></path>
+<path d="M23 26h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path>
+<path d="M23 22h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path>
+<path d="M23 18h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path>
+</symbol>
+</defs>
+</svg>
+<style>/* CSS stylesheet for displaying xarray objects in jupyterlab.
+ *
+ */
+
+:root {
+  --xr-font-color0: var(--jp-content-font-color0, rgba(0, 0, 0, 1));
+  --xr-font-color2: var(--jp-content-font-color2, rgba(0, 0, 0, 0.54));
+  --xr-font-color3: var(--jp-content-font-color3, rgba(0, 0, 0, 0.38));
+  --xr-border-color: var(--jp-border-color2, #e0e0e0);
+  --xr-disabled-color: var(--jp-layout-color3, #bdbdbd);
+  --xr-background-color: var(--jp-layout-color0, white);
+  --xr-background-color-row-even: var(--jp-layout-color1, white);
+  --xr-background-color-row-odd: var(--jp-layout-color2, #eeeeee);
+}
+
+html[theme=dark],
+body.vscode-dark {
+  --xr-font-color0: rgba(255, 255, 255, 1);
+  --xr-font-color2: rgba(255, 255, 255, 0.54);
+  --xr-font-color3: rgba(255, 255, 255, 0.38);
+  --xr-border-color: #1F1F1F;
+  --xr-disabled-color: #515151;
+  --xr-background-color: #111111;
+  --xr-background-color-row-even: #111111;
+  --xr-background-color-row-odd: #313131;
+}
+
+.xr-wrap {
+  display: block;
+  min-width: 300px;
+  max-width: 700px;
+}
+
+.xr-text-repr-fallback {
+  /* fallback to plain text repr when CSS is not injected (untrusted notebook) */
+  display: none;
+}
+
+.xr-header {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  border-bottom: solid 1px var(--xr-border-color);
+}
+
+.xr-header > div,
+.xr-header > ul {
+  display: inline;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.xr-obj-type,
+.xr-array-name {
+  margin-left: 2px;
+  margin-right: 10px;
+}
+
+.xr-obj-type {
+  color: var(--xr-font-color2);
+}
+
+.xr-sections {
+  padding-left: 0 !important;
+  display: grid;
+  grid-template-columns: 150px auto auto 1fr 20px 20px;
+}
+
+.xr-section-item {
+  display: contents;
+}
+
+.xr-section-item input {
+  display: none;
+}
+
+.xr-section-item input + label {
+  color: var(--xr-disabled-color);
+}
+
+.xr-section-item input:enabled + label {
+  cursor: pointer;
+  color: var(--xr-font-color2);
+}
+
+.xr-section-item input:enabled + label:hover {
+  color: var(--xr-font-color0);
+}
+
+.xr-section-summary {
+  grid-column: 1;
+  color: var(--xr-font-color2);
+  font-weight: 500;
+}
+
+.xr-section-summary > span {
+  display: inline-block;
+  padding-left: 0.5em;
+}
+
+.xr-section-summary-in:disabled + label {
+  color: var(--xr-font-color2);
+}
+
+.xr-section-summary-in + label:before {
+  display: inline-block;
+  content: '►';
+  font-size: 11px;
+  width: 15px;
+  text-align: center;
+}
+
+.xr-section-summary-in:disabled + label:before {
+  color: var(--xr-disabled-color);
+}
+
+.xr-section-summary-in:checked + label:before {
+  content: '▼';
+}
+
+.xr-section-summary-in:checked + label > span {
+  display: none;
+}
+
+.xr-section-summary,
+.xr-section-inline-details {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.xr-section-inline-details {
+  grid-column: 2 / -1;
+}
+
+.xr-section-details {
+  display: none;
+  grid-column: 1 / -1;
+  margin-bottom: 5px;
+}
+
+.xr-section-summary-in:checked ~ .xr-section-details {
+  display: contents;
+}
+
+.xr-array-wrap {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 20px auto;
+}
+
+.xr-array-wrap > label {
+  grid-column: 1;
+  vertical-align: top;
+}
+
+.xr-preview {
+  color: var(--xr-font-color3);
+}
+
+.xr-array-preview,
+.xr-array-data {
+  padding: 0 5px !important;
+  grid-column: 2;
+}
+
+.xr-array-data,
+.xr-array-in:checked ~ .xr-array-preview {
+  display: none;
+}
+
+.xr-array-in:checked ~ .xr-array-data,
+.xr-array-preview {
+  display: inline-block;
+}
+
+.xr-dim-list {
+  display: inline-block !important;
+  list-style: none;
+  padding: 0 !important;
+  margin: 0;
+}
+
+.xr-dim-list li {
+  display: inline-block;
+  padding: 0;
+  margin: 0;
+}
+
+.xr-dim-list:before {
+  content: '(';
+}
+
+.xr-dim-list:after {
+  content: ')';
+}
+
+.xr-dim-list li:not(:last-child):after {
+  content: ',';
+  padding-right: 5px;
+}
+
+.xr-has-index {
+  font-weight: bold;
+}
+
+.xr-var-list,
+.xr-var-item {
+  display: contents;
+}
+
+.xr-var-item > div,
+.xr-var-item label,
+.xr-var-item > .xr-var-name span {
+  background-color: var(--xr-background-color-row-even);
+  margin-bottom: 0;
+}
+
+.xr-var-item > .xr-var-name:hover span {
+  padding-right: 5px;
+}
+
+.xr-var-list > li:nth-child(odd) > div,
+.xr-var-list > li:nth-child(odd) > label,
+.xr-var-list > li:nth-child(odd) > .xr-var-name span {
+  background-color: var(--xr-background-color-row-odd);
+}
+
+.xr-var-name {
+  grid-column: 1;
+}
+
+.xr-var-dims {
+  grid-column: 2;
+}
+
+.xr-var-dtype {
+  grid-column: 3;
+  text-align: right;
+  color: var(--xr-font-color2);
+}
+
+.xr-var-preview {
+  grid-column: 4;
+}
+
+.xr-var-name,
+.xr-var-dims,
+.xr-var-dtype,
+.xr-preview,
+.xr-attrs dt {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 10px;
+}
+
+.xr-var-name:hover,
+.xr-var-dims:hover,
+.xr-var-dtype:hover,
+.xr-attrs dt:hover {
+  overflow: visible;
+  width: auto;
+  z-index: 1;
+}
+
+.xr-var-attrs,
+.xr-var-data {
+  display: none;
+  background-color: var(--xr-background-color) !important;
+  padding-bottom: 5px !important;
+}
+
+.xr-var-attrs-in:checked ~ .xr-var-attrs,
+.xr-var-data-in:checked ~ .xr-var-data {
+  display: block;
+}
+
+.xr-var-data > table {
+  float: right;
+}
+
+.xr-var-name span,
+.xr-var-data,
+.xr-attrs {
+  padding-left: 25px !important;
+}
+
+.xr-attrs,
+.xr-var-attrs,
+.xr-var-data {
+  grid-column: 1 / -1;
+}
+
+dl.xr-attrs {
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: 125px auto;
+}
+
+.xr-attrs dt,
+.xr-attrs dd {
+  padding: 0;
+  margin: 0;
+  float: left;
+  padding-right: 10px;
+  width: auto;
+}
+
+.xr-attrs dt {
+  font-weight: normal;
+  grid-column: 1;
+}
+
+.xr-attrs dt:hover span {
+  display: inline-block;
+  background: var(--xr-background-color);
+  padding-right: 10px;
+}
+
+.xr-attrs dd {
+  grid-column: 2;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.xr-icon-database,
+.xr-icon-file-text2 {
+  display: inline-block;
+  vertical-align: middle;
+  width: 1em;
+  height: 1.5em !important;
+  stroke-width: 0;
+  stroke: currentColor;
+  fill: currentColor;
+}
+</style><pre class='xr-text-repr-fallback'>&lt;xarray.DataArray ()&gt;
+array(1.00208561)</pre><div class='xr-wrap' hidden><div class='xr-header'><div class='xr-obj-type'>xarray.DataArray</div><div class='xr-array-name'></div></div><ul class='xr-sections'><li class='xr-section-item'><div class='xr-array-wrap'><input id='section-06ec754e-834b-4f15-bc27-676cd22b9335' class='xr-array-in' type='checkbox' checked><label for='section-06ec754e-834b-4f15-bc27-676cd22b9335' title='Show/hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-array-preview xr-preview'><span>1.002</span></div><div class='xr-array-data'><pre>array(1.00208561)</pre></div></div></li><li class='xr-section-item'><input id='section-1aca641d-a2c0-4778-8cb0-2dbf0567048b' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-1aca641d-a2c0-4778-8cb0-2dbf0567048b' class='xr-section-summary'  title='Expand/collapse section'>Coordinates: <span>(0)</span></label><div class='xr-section-inline-details'></div><div class='xr-section-details'><ul class='xr-var-list'></ul></div></li><li class='xr-section-item'><input id='section-d5aedee9-d89e-4f49-9bff-3d8ecceff141' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-d5aedee9-d89e-4f49-9bff-3d8ecceff141' class='xr-section-summary'  title='Expand/collapse section'>Attributes: <span>(0)</span></label><div class='xr-section-inline-details'></div><div class='xr-section-details'><dl class='xr-attrs'></dl></div></li></ul></div></div>
+
+
+
+Again we sample from the posterior predictive distribution of this model and plot the results.
+
+
+```python
+pp_pooled_logistic_df = get_pp_df(pooled_logistic_model, pooled_logistic_trace)
+```
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='6000' class='' max='6000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [6000/6000 01:08<00:00]
+</div>
+
+
+
+
+```python
+pp_pooled_logistic_df.head()
+```
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>age</th>
+<th>taxon_id</th>
+<th>pp_mean</th>
+<th>pp_low</th>
+<th>pp_high</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>0</th>
+<td>1.000000</td>
+<td>0</td>
+<td>22.852762</td>
+<td>10.267422</td>
+<td>56.497339</td>
+</tr>
+<tr>
+<th>1</th>
+<td>1.000000</td>
+<td>1</td>
+<td>9.839328</td>
+<td>0.906120</td>
+<td>125.299677</td>
+</tr>
+<tr>
+<th>2</th>
+<td>1.000000</td>
+<td>2</td>
+<td>12.589540</td>
+<td>3.182979</td>
+<td>91.279583</td>
+</tr>
+<tr>
+<th>3</th>
+<td>1.000000</td>
+<td>3</td>
+<td>11.080350</td>
+<td>4.344195</td>
+<td>36.627854</td>
+</tr>
+<tr>
+<th>4</th>
+<td>1.071878</td>
+<td>0</td>
+<td>24.465512</td>
+<td>11.729286</td>
+<td>56.373575</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<br>
+
+
+
+```python
+fig, axes = plot_pp_by_taxon(pp_logistic_df, plot_data=False, name="Unpooled logistic")
+plot_pp_by_taxon(pp_pooled_logistic_df,
+                 name="Pooled logistic",
+                 fig=fig, axes=axes);
+```
+
+
+<center>![png](/resources/tyrannosaurid/Growth%20Curves%20REPARAM_92_0.png)</center>
+
+
+We see that the posterior predictive means for the pooled logistic model fit better than those from the unpooled model, and that the credible intervals are again significantly smaller.
+
+We now compare the posterior predictions for the pooled log-linear and logistic models.
+
+
+```python
+fig, axes = plot_pp_by_taxon(pp_pooled_loglin_df, plot_data=False, name="Pooled log-linear")
+plot_pp_by_taxon(pp_pooled_logistic_df,
+                 name="Pooled logistic",
+                 fig=fig, axes=axes);
+```
+
+
+<center>![png](/resources/tyrannosaurid/Growth%20Curves%20REPARAM_94_0.png)</center>
+
+
+These models agree with each other fairly well, espescially in age ranges where the taxon data is concentrated, with the logistic model making slightly more plausible predictions as age increases.
+
+### Model comparison
+
+We now compare these four models using two of the information criteria available in `arviz`.  While _BSM_ uses the [deviance information criterion](https://en.wikipedia.org/wiki/Deviance_information_criterion) (DIC) to compare models, DIC is no longer supported in `pymc3` or `arviz`, so we use Pareto-smoothed importance sampling leave-one-out cross validation (PSIS-LOO) and the widely applicable information criterion (WAIC) to compare models.  These information criteria are available in `arviz`.  For details on these methods, consult the [`pymc3` documentation](https://docs.pymc.io/notebooks/model_comparison.html).
+
+
+```python
+traces = {
+    'Unpooled log-linear': loglin_trace,
+    'Pooled log-linear': pooled_loglin_trace,
+    'Unpooled logistic': logistic_trace,
+    'Pooled logistic': pooled_logistic_trace
+}
+```
+
+
+```python
+def plot_compare(comp_df, ic, height=6, fig=None, axes=None):
+    if fig is None or axes is None:
+        fig, axes = plt.subplots(
+            ncols=2, figsize=(16 * (height / 6), height)
+        )
+        
+    score_ax, weight_ax = axes
+
+    az.plot_compare(comp_df, insample_dev=False, plot_ic_diff=False, ax=score_ax)
+    
+    score_ax.set_xlabel("Log score")
+    score_ax.set_ylabel("Model")
+
+    comp_df['weight'].plot.barh(ax=weight_ax)
+
+    weight_ax.set_xscale('log')
+    weight_ax.set_xlim(right=2)
+    weight_ax.set_xlabel("Stacking weight")
+
+    weight_ax.set_yticklabels([])
+    weight_ax.invert_yaxis()
+
+    fig.suptitle(f"{ic} comparison")
+    fig.tight_layout()
+    
+    return fig, axes
+```
+
+The following plots show the PSIS-LOO comparison for these models.
+
+
+```python
+loo_df = az.compare(traces, ic='loo', seed=SEED)
+plot_compare(loo_df, "LOO");
+```
+
+
+<center>![png](/resources/tyrannosaurid/Growth%20Curves%20REPARAM_100_0.png)</center>
+
+
+Note that larger scores are better, so PSIS-LOO favors the pooled models over the unpooled models and favors the pooled logistic model most highly of all.
+
+
+```python
+waic_df = az.compare(traces, ic='waic', seed=SEED)
+plot_compare(waic_df, "WAIC");
+```
+
+
+<center>![png](/resources/tyrannosaurid/Growth%20Curves%20REPARAM_102_0.png)</center>
+
+
+Using WAIC produces quite similar results.
+
+Interestingly, the results in _BSM_ using DIC favor the logistic model slightly.
+
+Many thanks to Reich and Ghosh for their excellent textbook which brought this fun dataset to my attention and to [Kiril Zvezdarov](https://kirilzvezdarov.com/about.html) for his comments on early drafts.
+
+The notebook this post was generated from is available [here](https://nbviewer.jupyter.org/gist/AustinRochford/0baa4147c879556ee7cf3d9b0a663fb8).
+
+
+```python
+%load_ext watermark
+%watermark -n -u -v -iv
+```
+
+    Last updated: Sun May 16 2021
+    
+    Python implementation: CPython
+    Python version       : 3.8.8
+    IPython version      : 7.22.0
+    
+    pymc3     : 3.11.1
+    seaborn   : 0.11.1
+    pandas    : 1.2.3
+    arviz     : 0.11.2
+    matplotlib: 3.4.1
+    numpy     : 1.20.2
+    aesara    : 2.0.6
+    
+

@@ -3,7 +3,7 @@ title: The Hierarchical Regularized Horseshoe Prior in PyMC3
 tags: Bayesian Statistics, PyMC3, Python
 ---
 
-For some time I have been interested in better understanding the [horseshoe prior](http://proceedings.mlr.press/v5/carvalho09a)^[Carvalho, C. M., Polson, N. G., & Scott, J. G. (2009, April). Handling sparsity via the horseshoe. In _Artificial Intelligence and Statistics_ (pp. 73-80). PMLR.] by implementing it in PyMC3.  The horsehoe prior is a continuous alternative to the [spike-and-slab](https://en.wikipedia.org/wiki/Spike-and-slab_regression) prior for sparse Bayesian estimation.  The continuity of the horeshoe prior allows for simpler estimation using general purpose Bayesian computation packages such as [`pymc3`](https://docs.pymc.io/) and [Stan](https://mc-stan.org/).  [Piironen and Veharti](https://projecteuclid.org/journals/electronic-journal-of-statistics/volume-11/issue-2/Sparsity-information-and-regularization-in-the-horseshoe-and-other-shrinkage/10.1214/17-EJS1337SI.full)^[Piironen, J., & Vehtari, A. (2017). Sparsity information and regularization in the horseshoe and other shrinkage priors. _Electronic Journal of Statistics_, 11(2), 5018-5051.] have proposed a hierarchical regularized horseshoe prior that has advantages over the original horseshoe prior when it comes to specifying the hyperprior distributions on the regularization parameters.  In the appendix of their paper, Piironen and Veharti give a sample implementation in Stan.  This post gives a corresponding implementation in `pymc3` and tests it on simulated data.
+For some time I have been interested in better understanding the [horseshoe prior](http://proceedings.mlr.press/v5/carvalho09a)^[Carvalho, C. M., Polson, N. G., & Scott, J. G. (2009, April). Handling sparsity via the horseshoe. In _Artificial Intelligence and Statistics_ (pp. 73-80). PMLR.] by implementing it in PyMC3.  The horsehoe prior is a continuous alternative to the [spike-and-slab](https://en.wikipedia.org/wiki/Spike-and-slab_regression) prior for sparse Bayesian estimation.  The continuity of the horeshoe prior allows for simpler estimation using general purpose Bayesian computation packages such as [`pymc3`](https://docs.pymc.io/) and [Stan](https://mc-stan.org/).  [Piironen and Vehtari](https://projecteuclid.org/journals/electronic-journal-of-statistics/volume-11/issue-2/Sparsity-information-and-regularization-in-the-horseshoe-and-other-shrinkage/10.1214/17-EJS1337SI.full)^[Piironen, J., & Vehtari, A. (2017). Sparsity information and regularization in the horseshoe and other shrinkage priors. _Electronic Journal of Statistics_, 11(2), 5018-5051.] have proposed a hierarchical regularized horseshoe prior that has advantages over the original horseshoe prior when it comes to specifying the hyperprior distributions on the regularization parameters.  In the appendix of their paper, Piironen and Vehtari give a sample implementation in Stan.  This post gives a corresponding implementation in `pymc3` and tests it on simulated data.
 
 <center><img src="https://upload.wikimedia.org/wikipedia/commons/f/f1/Horseshoe.jpg" width="300"></center>
 
@@ -135,13 +135,13 @@ with pm.Model() as model:
 
 The hierarchical regularized horseshoe uses two levels of regularization, global and local. There is a global parameter, $\tau$, that will shrink all parameters towards zero (similarly to ridge regression) along with local parameters $\lambda_i$ for each coefficient.  A long-tailed prior on the $\lambda_i$s allows some of them to be nonzero, with the scale of $\tau$ setting the prior expected number of nonzero parameters.
 
-An important calculation (§3.3 of Piironen and Veharti) shows that if we believe there are actually $D_*$ nonzero coefficients, the prior on the global shrinkage parameter $\tau$ should be
+An important calculation (§3.3 of Piironen and Vehtari) shows that if we believe there are actually $D_*$ nonzero coefficients, the prior on the global shrinkage parameter $\tau$ should be
 
 $$
 \tau \sim \textrm{Half-StudentT}_{2} \left(\frac{D_*}{D - D_*} \cdot \frac{\sigma}{\sqrt{N}}\right).
 $$
 
-Since we know the generating process for this data, we set $D_* = D_0$, although Piironen and Veharti show that this guess only needs to be order-of-magnitude correct in practice.
+Since we know the generating process for this data, we set $D_* = D_0$, although Piironen and Vehtari show that this guess only needs to be order-of-magnitude correct in practice.
 
 
 ```python
@@ -165,7 +165,7 @@ with model:
     λ = pm.HalfStudentT("λ", 5, shape=D)
 ```
 
-Following §2.3 of Piironen and Veharti, we place an inverse gamma prior on $c^2$, $c^2 \sim \textrm{InverseGamma}(1, 1).$
+Following §2.3 of Piironen and Vehtari, we place an inverse gamma prior on $c^2$, $c^2 \sim \textrm{InverseGamma}(1, 1).$
 
 
 ```python
@@ -199,7 +199,7 @@ with model:
     β = pm.Deterministic("β", z * τ * λ_)
 ```
 
-Note that it is important to constrain two of the three factors $z_i$, $\tau$, and $\tilde{\lambda}_i$ to be positive, otherwise this model will not be fully [identified](https://en.wikipedia.org/wiki/Identifiability).  Unlike in Piironen and Veharti, we enforce identifiability by using half-Student T priors on $\tau$ and $\lambda_i$.
+Note that it is important to constrain two of the three factors $z_i$, $\tau$, and $\tilde{\lambda}_i$ to be positive, otherwise this model will not be fully [identified](https://en.wikipedia.org/wiki/Identifiability).  Unlike in Piironen and Vehtari, we enforce identifiability by using half-Student T priors on $\tau$ and $\lambda_i$.
 
 Using a relatively flat $N(0, 10^2)$ prior for the intercept, the likelihood of the observed data is
 
@@ -1803,6 +1803,8 @@ array(0.97777778)</pre><div class='xr-wrap' hidden><div class='xr-header'><div c
 
 
 This post is available as a Jupyter notebook [here](https://nbviewer.jupyter.org/gist/AustinRochford/8838035ac87a080af3addbaf95f2a72f).
+
+Many thanks to [Sue Márquez](https://twitter.com/SueMarquezR) for pointing out that the original post spelled Aki's name wrong, and sincere apologies to Aki.
 
 
 ```python

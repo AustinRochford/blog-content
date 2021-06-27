@@ -1,0 +1,2646 @@
+---
+title: A Bayesian Analysis of Lego Prices in Python with PyMC3
+tags: Lego, Python, PyMC3, Bayesian Statistics
+---
+
+This post is the second in a series of posts analyzing Lego pricing data scraped from [brickset.com](https://brickset.com/).  The [first post](https://austinrochford.com/posts/2021-06-03-vader-meditation.html) gave an empirical analysis of the fairness of the price for Darth Vader's Meditation Chamber ([75296](https://www.lego.com/en-us/product/darth-vader-meditation-chamber-75296)), disproving my initial impression that the set was overpriced for its size and prompting me to preorder it.  In this post we will build several more formal models of the price of Lego sets based on their size and use them to answer a few related questions.
+
+<center>
+<figure>
+<img src="/resources/lego_pymc3_files/tantiveiv.png" width=500>
+<br>
+<caption>The newest addition to my collection ([75244](https://brickset.com/sets/75244-1/Tantive-IV)).</caption>
+</figure>
+</center>
+
+First we make the necessary Python imports and do some light housekeeping.
+
+
+```python
+%matplotlib inline
+```
+
+
+```python
+import datetime
+from functools import reduce
+import itertools as itl
+from warnings import filterwarnings
+```
+
+
+```python
+from aesara import shared, tensor as at
+import arviz as az
+from matplotlib import MatplotlibDeprecationWarning, pyplot as plt
+from matplotlib.lines import Line2D
+from matplotlib.ticker import FuncFormatter, MultipleLocator, StrMethodFormatter
+import numpy as np
+import pandas as pd
+import pymc3 as pm
+import scipy as sp
+from sklearn.preprocessing import StandardScaler
+import seaborn as sns
+```
+
+
+```python
+filterwarnings('ignore', category=UserWarning, message=".*FixedFormatter.*")
+filterwarnings('ignore', category=MatplotlibDeprecationWarning, module='pandas')
+filterwarnings('ignore', category=UserWarning, module='aesara')
+filterwarnings('ignore', category=UserWarning, module='arviz')
+filterwarnings('ignore', category=UserWarning, module='pandas')
+```
+
+
+```python
+plt.rcParams['figure.figsize'] = (8, 6)
+
+sns.set(color_codes=True)
+
+dollar_formatter = StrMethodFormatter("${x:,.2f}")
+```
+
+## Load the Data
+
+We begin the real work by loading the data scraped from Brickset.  See the [first post](https://austinrochford.com/posts/2021-06-03-vader-meditation.html) in this series for more background on the data.
+
+
+```python
+DATA_URL = 'https://austinrochford.com/resources/lego/brickset_01011980_06012021.csv.gz'
+```
+
+
+```python
+def to_datetime(year):
+    return np.datetime64(f"{round(year)}-01-01")
+```
+
+
+```python
+full_df = (pd.read_csv(DATA_URL,
+                       usecols=[
+                           "Year released", "Set number",
+                           "Name", "Set type", "Theme", "Subtheme",
+                           "Pieces", "RRP"
+                       ])
+             .dropna(subset=[
+                 "Year released", "Set number",
+                 "Name", "Set type", "Theme",
+                 "Pieces", "RRP"
+             ]))
+full_df["Year released"] = full_df["Year released"].apply(to_datetime)
+full_df = (full_df.set_index(["Year released", "Set number"])
+                  .sort_index())
+```
+
+We see that the data set contains information on approximately 8,500 Lego sets produced between 1980 and June 2021.
+
+
+```python
+full_df.head()
+```
+
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th></th>
+<th>Name</th>
+<th>Set type</th>
+<th>Theme</th>
+<th>Pieces</th>
+<th>RRP</th>
+<th>Subtheme</th>
+</tr>
+<tr>
+<th>Year released</th>
+<th>Set number</th>
+<th></th>
+<th></th>
+<th></th>
+<th></th>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th rowspan="5" valign="top">1980-01-01</th>
+<th>1041-2</th>
+<td>Educational Duplo Building Set</td>
+<td>Normal</td>
+<td>Dacta</td>
+<td>68.0</td>
+<td>36.50</td>
+<td>NaN</td>
+</tr>
+<tr>
+<th>1075-1</th>
+<td>LEGO People Supplementary Set</td>
+<td>Normal</td>
+<td>Dacta</td>
+<td>304.0</td>
+<td>14.50</td>
+<td>NaN</td>
+</tr>
+<tr>
+<th>1101-1</th>
+<td>Replacement 4.5V Motor</td>
+<td>Normal</td>
+<td>Service Packs</td>
+<td>1.0</td>
+<td>5.65</td>
+<td>NaN</td>
+</tr>
+<tr>
+<th>1123-1</th>
+<td>Ball and Socket Couplings &amp; One Articulated Joint</td>
+<td>Normal</td>
+<td>Service Packs</td>
+<td>8.0</td>
+<td>16.00</td>
+<td>NaN</td>
+</tr>
+<tr>
+<th>1130-1</th>
+<td>Plastic Folder for Building Instructions</td>
+<td>Normal</td>
+<td>Service Packs</td>
+<td>1.0</td>
+<td>14.00</td>
+<td>NaN</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center><br>
+
+
+
+
+```python
+full_df.tail()
+```
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th></th>
+<th>Name</th>
+<th>Set type</th>
+<th>Theme</th>
+<th>Pieces</th>
+<th>RRP</th>
+<th>Subtheme</th>
+</tr>
+<tr>
+<th>Year released</th>
+<th>Set number</th>
+<th></th>
+<th></th>
+<th></th>
+<th></th>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th rowspan="5" valign="top">2021-01-01</th>
+<th>80022-1</th>
+<td>Spider Queen's Arachnoid Base</td>
+<td>Normal</td>
+<td>Monkie Kid</td>
+<td>1170.0</td>
+<td>119.99</td>
+<td>Season 2</td>
+</tr>
+<tr>
+<th>80023-1</th>
+<td>Monkie Kid's Team Dronecopter</td>
+<td>Normal</td>
+<td>Monkie Kid</td>
+<td>1462.0</td>
+<td>149.99</td>
+<td>Season 2</td>
+</tr>
+<tr>
+<th>80024-1</th>
+<td>The Legendary Flower Fruit Mountain</td>
+<td>Normal</td>
+<td>Monkie Kid</td>
+<td>1949.0</td>
+<td>169.99</td>
+<td>Season 2</td>
+</tr>
+<tr>
+<th>80106-1</th>
+<td>Story of Nian</td>
+<td>Normal</td>
+<td>Seasonal</td>
+<td>1067.0</td>
+<td>79.99</td>
+<td>Chinese Traditional Festivals</td>
+</tr>
+<tr>
+<th>80107-1</th>
+<td>Spring Lantern Festival</td>
+<td>Normal</td>
+<td>Seasonal</td>
+<td>1793.0</td>
+<td>119.99</td>
+<td>Chinese Traditional Festivals</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center><br>
+
+
+
+```python
+full_df.describe()
+```
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>Pieces</th>
+<th>RRP</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>count</th>
+<td>8502.000000</td>
+<td>8502.000000</td>
+</tr>
+<tr>
+<th>mean</th>
+<td>258.739591</td>
+<td>31.230506</td>
+</tr>
+<tr>
+<th>std</th>
+<td>481.627846</td>
+<td>44.993559</td>
+</tr>
+<tr>
+<th>min</th>
+<td>0.000000</td>
+<td>0.000000</td>
+</tr>
+<tr>
+<th>25%</th>
+<td>32.000000</td>
+<td>7.000000</td>
+</tr>
+<tr>
+<th>50%</th>
+<td>98.000000</td>
+<td>17.000000</td>
+</tr>
+<tr>
+<th>75%</th>
+<td>300.000000</td>
+<td>39.990000</td>
+</tr>
+<tr>
+<th>max</th>
+<td>11695.000000</td>
+<td>799.990000</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center><br>
+
+
+
+We also load data about my personal collection and add a column to `full_df` indicating whether or not I own each set.
+
+
+```python
+MY_COLLECTION_URL = 'https://austinrochford.com/resources/lego/Brickset-MySets-owned-20210602.csv'
+```
+
+
+```python
+my_df = pd.read_csv(MY_COLLECTION_URL)
+```
+
+
+```python
+my_df.index
+```
+
+
+
+
+```
+Index(['8092-1', '10221-1', '10266-1', '10281-1', '10283-1', '21309-1',
+       '21312-1', '21320-1', '21321-1', '31091-1', '40174-1', '40268-1',
+       '40391-1', '40431-1', '40440-1', '41602-1', '41608-1', '41609-1',
+       '41628-1', '75030-1', '75049-1', '75074-1', '75075-1', '75093-1',
+       '75099-1', '75136-1', '75137-1', '75138-1', '75162-1', '75176-1',
+       '75187-1', '75229-1', '75243-1', '75244-1', '75248-1', '75254-1',
+       '75255-1', '75263-1', '75264-1', '75266-1', '75267-1', '75269-1',
+       '75273-1', '75277-1', '75278-1', '75283-1', '75292-1', '75297-1',
+       '75302-1', '75306-1', '75308-1', '75317-1', '75318-1'],
+      dtype='object')
+```
+
+
+
+
+```python
+full_df["austin"] = (full_df.index
+                            .get_level_values("Set number")
+                            .isin(my_df.index))
+```
+
+Since the data spans more than 40 years, it is important to adjust for inflation.  We use the [Consumer Price Index for All Urban Consumers: All Items in U.S. City Average](https://fred.stlouisfed.org/series/CPIAUCNS) from the U.S. Federal Reserve to adjust for inflation.
+
+
+```python
+CPI_URL = 'https://austinrochford.com/resources/lego/CPIAUCNS202100401.csv'
+```
+
+
+```python
+years = pd.date_range('1979-01-01', '2021-01-01', freq='Y') \
+            + datetime.timedelta(days=1)
+cpi_df = (pd.read_csv(CPI_URL, index_col="DATE", parse_dates=["DATE"])
+            .loc[years])
+cpi_df["to2021"] = cpi_df.loc["2021-01-01"] / cpi_df
+```
+
+We now add a column `RRP2021`, which is `RRP` adjusted to 2021 dollars.
+
+
+```python
+full_df["RRP2021"] = (pd.merge(full_df, cpi_df,
+                               left_on=["Year released"],
+                               right_index=True)
+                        .apply(lambda df: df["RRP"] * df["to2021"],
+                               axis=1))
+```
+
+Based on the exploratory data analysis in the previous post, we filter `full_df` down to approximately 6,300 sets to be included in our analysis.
+
+
+```python
+FILTERS = [
+    full_df["Set type"] == "Normal",
+    full_df["Pieces"] > 10,
+    full_df["Theme"] != "Duplo",
+    full_df["Theme"] != "Service Packs",
+    full_df["Theme"] != "Bulk Bricks",
+    full_df["RRP"] > 0
+]
+```
+
+
+```python
+df = full_df[reduce(np.logical_and, FILTERS)].copy()
+```
+
+
+```python
+df.head()
+```
+
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th></th>
+<th>Name</th>
+<th>Set type</th>
+<th>Theme</th>
+<th>Pieces</th>
+<th>RRP</th>
+<th>Subtheme</th>
+<th>austin</th>
+<th>RRP2021</th>
+</tr>
+<tr>
+<th>Year released</th>
+<th>Set number</th>
+<th></th>
+<th></th>
+<th></th>
+<th></th>
+<th></th>
+<th></th>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th rowspan="5" valign="top">1980-01-01</th>
+<th>1041-2</th>
+<td>Educational Duplo Building Set</td>
+<td>Normal</td>
+<td>Dacta</td>
+<td>68.0</td>
+<td>36.50</td>
+<td>NaN</td>
+<td>False</td>
+<td>122.721632</td>
+</tr>
+<tr>
+<th>1075-1</th>
+<td>LEGO People Supplementary Set</td>
+<td>Normal</td>
+<td>Dacta</td>
+<td>304.0</td>
+<td>14.50</td>
+<td>NaN</td>
+<td>False</td>
+<td>48.752429</td>
+</tr>
+<tr>
+<th>5233-1</th>
+<td>Bedroom</td>
+<td>Normal</td>
+<td>Homemaker</td>
+<td>26.0</td>
+<td>4.50</td>
+<td>NaN</td>
+<td>False</td>
+<td>15.130064</td>
+</tr>
+<tr>
+<th>6305-1</th>
+<td>Trees and Flowers</td>
+<td>Normal</td>
+<td>Town</td>
+<td>12.0</td>
+<td>3.75</td>
+<td>Accessories</td>
+<td>False</td>
+<td>12.608387</td>
+</tr>
+<tr>
+<th>6306-1</th>
+<td>Road Signs</td>
+<td>Normal</td>
+<td>Town</td>
+<td>12.0</td>
+<td>2.50</td>
+<td>Accessories</td>
+<td>False</td>
+<td>8.405591</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center><br>
+
+
+
+
+```python
+df.describe()
+```
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>Pieces</th>
+<th>RRP</th>
+<th>RRP2021</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>count</th>
+<td>6312.000000</td>
+<td>6312.000000</td>
+<td>6312.000000</td>
+</tr>
+<tr>
+<th>mean</th>
+<td>337.177440</td>
+<td>37.038246</td>
+<td>45.795998</td>
+</tr>
+<tr>
+<th>std</th>
+<td>535.619271</td>
+<td>49.657704</td>
+<td>58.952563</td>
+</tr>
+<tr>
+<th>min</th>
+<td>11.000000</td>
+<td>0.600000</td>
+<td>0.971220</td>
+</tr>
+<tr>
+<th>25%</th>
+<td>68.000000</td>
+<td>9.990000</td>
+<td>11.866173</td>
+</tr>
+<tr>
+<th>50%</th>
+<td>177.000000</td>
+<td>19.990000</td>
+<td>26.712319</td>
+</tr>
+<tr>
+<th>75%</th>
+<td>400.000000</td>
+<td>49.500000</td>
+<td>55.952471</td>
+</tr>
+<tr>
+<th>max</th>
+<td>11695.000000</td>
+<td>799.990000</td>
+<td>897.373477</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center><br>
+
+
+
+## Modeling
+
+Upon plotting the data, a linear relationship between the logarithm of pieces and the logarithm of reccomended retail price (in 2021 dollars) becomes immediately apparent.
+
+
+```python
+ax = sns.scatterplot(x="Pieces", y="RRP2021", data=df,
+                alpha=0.05);
+sns.scatterplot(x="Pieces", y="RRP2021",
+                data=df[df["austin"] == True],
+                label="My sets", ax=ax); 
+
+ax.set_xscale('log');
+
+ax.set_yscale('log');
+ax.set_ylabel("Retail price (2021 $)");
+
+ax.legend(loc='upper left');
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_31_0.png)</center>
+
+
+### Pooled model
+
+We start with a very simple pooled linear model of log price versus log pieces.  Let $Y_i$ denote the recommended retail price of the $i$-th set and $y_i = \log Y_i$.  Similarly, let $X_i$ denote the number of pieces in the $i$-th set and $x_i = \log X_i$. Due to the log-log linear relationship between $Y_i$ and $X_i$, our models will take the form
+
+$$Y_i = f_i(X_i) \cdot \varepsilon_i,$$
+
+where $\varepsilon_i$ accounts for the unmeasured noise in the price of the $i$-th set.  We place a [log-normal](https://en.wikipedia.org/wiki/Log-normal_distribution) prior on $\varepsilon_i$ so that $
+\textrm{E}(\varepsilon_i) = 1$ and $\textrm{Var}\left(\log(\varepsilon_j)\right) = \sigma_i^2.$  standard [distributional math](https://en.wikipedia.org/wiki/Log-normal_distribution#Generation_and_parameters) shows that
+
+$$y_i \sim N\left(\log\left(f_i(X_i))\right) - \frac{\sigma_i^2}{2}, \sigma_i^2\right).$$
+
+Each model is of the form
+
+$$f_i(X_i) = b_{0, i} \cdot X_i^{\beta_i},$$
+
+so
+
+$$\log\left(f_i(X_i)\right) = \beta_{0, i} + \beta_i x_i,$$ 
+
+where $\beta_{0, i} = \log b_{0, i}$.
+
+We define `log_pieces` and `log_rrp2021` which correspond to $x_i$ and $y_i$ respectively.
+
+
+```python
+pieces = df["Pieces"].values
+log_pieces = np.log(df["Pieces"].values)
+
+rrp2021 = df["RRP2021"].values
+log_rrp2021 = np.log(rrp2021)
+```
+
+For computational efficiency, we will standardize $x_i$ to produce $\tilde{x}_i$ which has mean zero and variance one.
+
+
+```python
+scaler = StandardScaler().fit(log_pieces[:, np.newaxis])
+
+def scale_log_pieces(log_pieces, scaler=scaler):
+    return scaler.transform(log_pieces[:, np.newaxis])[:, 0]
+
+std_log_pieces = scale_log_pieces(log_pieces)
+std_log_pieces_ = shared(std_log_pieces)
+```
+
+Here definining `std_log_pieces_` as an `aesara` `shared` variable will allow us to change its value later for posterior predictive sampling.
+
+Our models are therefore given by
+
+$$\log\left(f_i(X_i)\right) = \beta_{0, i} + \beta_i \tilde{x}_i.$$
+
+For the pooled model, $\beta_{0, i} = \beta_0$, $\beta_i = \beta$, and $\sigma_i = \sigma$ are constant across all sets.  We give them the priors
+
+$$
+\begin{align*}
+    \beta_0
+        & \sim N(0, 2.5^2) \\
+    \beta
+        & \sim N(0, 2.5^2) \\
+    \sigma
+        & \sim \textrm{HalfNormal}(5^2).
+\end{align*}
+$$
+
+
+```python
+with pm.Model() as pooled_model:
+    β0 = pm.Normal("β0", 0., 2.5)
+    β_pieces = pm.Normal("β_pieces", 0., 2.5)
+    
+    σ = pm.HalfNormal("σ", 5.)
+```
+
+We define the mean and likelihood of the observed data as above.
+
+
+```python
+with pooled_model:
+    μ = β0 + β_pieces * std_log_pieces_ - 0.5 * σ**2
+    obs = pm.Normal("obs", μ, σ, observed=log_rrp2021)
+```
+
+We now sample from posterior distribution of this model.
+
+
+```python
+CHAINS = 3
+SEED = 123456789
+
+SAMPLE_KWARGS = {
+    'cores': CHAINS,
+    'random_seed': [SEED + i for i in range(CHAINS)],
+    'return_inferencedata': True
+}
+```
+
+
+```python
+with pooled_model:
+    pooled_trace = pm.sample(**SAMPLE_KWARGS)
+```
+
+    Auto-assigning NUTS sampler...
+    Initializing NUTS using jitter+adapt_diag...
+    Multiprocess sampling (3 chains in 3 jobs)
+    NUTS: [β0, β_pieces, σ]
+
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='6000' class='' max='6000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [6000/6000 00:15<00:00 Sampling 3 chains, 0 divergences]
+</div>
+
+
+
+    Sampling 3 chains for 1_000 tune and 1_000 draw iterations (3_000 + 3_000 draws total) took 18 seconds.
+
+
+The energy plot, BFMI, and $\hat{R}$ statistics for these samples show no cause for concern.
+
+
+```python
+def make_diagnostic_plots(trace, axes=None, min_mult=0.995, max_mult=1.005):
+    if axes is None:
+        fig, axes = plt.subplots(ncols=2, sharex=False, sharey=False,
+                                 figsize=(16, 6))
+        
+    az.plot_energy(trace, ax=axes[0])
+    
+    
+    rhat = az.rhat(trace).max()
+    axes[1].barh(np.arange(len(rhat.variables)), rhat.to_array(),
+                 tick_label=list(rhat.variables.keys()))
+    axes[1].axvline(1, c='k', ls='--')
+
+    axes[1].set_xlim(
+        min_mult * min(rhat.min().to_array().min(), 1),
+        max_mult * max(rhat.max().to_array().max(), 1)
+    )
+    axes[1].set_xlabel(r"$\hat{R}$")
+
+    axes[1].set_ylabel("Variable")
+    
+    return fig, axes
+```
+
+
+```python
+make_diagnostic_plots(pooled_trace);
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_45_0.png)</center>
+
+
+We sample from the posterior predictive distribution at the observed data points and plot the residuals.
+
+
+```python
+with pooled_model:
+    pp_trace_data = pm.sample_posterior_predictive(pooled_trace)
+    
+df["pooled_resid"] = (log_rrp2021 - pp_trace_data["obs"]).mean(axis=0)
+```
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='3000' class='' max='3000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [3000/3000 00:02<00:00]
+</div>
+
+
+
+
+```python
+ax = sns.scatterplot(x="Pieces", y="pooled_resid", data=df,
+                     alpha=0.1)
+
+ax.set_xscale('log');
+ax.set_xlabel("Pieces");
+
+ax.set_ylabel("Log RRP residual (2021 $)");
+
+ax.set_title("Pooled model");
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_48_0.png)</center>
+
+
+We will investigate these residuals further shortly.  First we sample from the posterior predictive distribution along a grid spanning reasonable values of pieces and plot the resulting predictions.
+
+
+```python
+pp_pieces = np.logspace(1, np.log10(pieces.max()))
+pp_log_pieces = np.log(pp_pieces)
+pp_std_log_pieces = scale_log_pieces(pp_log_pieces)
+```
+
+
+```python
+std_log_pieces_.set_value(pp_std_log_pieces)
+```
+
+
+```python
+with pooled_model:
+    pooled_pp_trace = pm.sample_posterior_predictive(pooled_trace)
+```
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='3000' class='' max='3000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [3000/3000 00:01<00:00]
+</div>
+
+
+
+
+```python
+ax = sns.scatterplot(x="Pieces", y="RRP2021", data=df,
+                alpha=0.05);
+sns.scatterplot(x="Pieces", y="RRP2021",
+                data=df[df["austin"] == True],
+                alpha=0.5, label="My sets",
+                ax=ax);
+
+pp_low, pp_high = np.percentile(
+    np.exp(pooled_pp_trace["obs"]),
+    [2.5, 97.4],
+    axis=0
+)
+ax.plot(pp_pieces, np.exp(pooled_pp_trace["obs"]).mean(axis=0),
+        c='k', label="Posterior predicted mean");
+ax.fill_between(pp_pieces, pp_low, pp_high,
+                color='k', alpha=0.15, zorder=-1,
+                label="95% posterior interval");
+
+ax.set_xscale('log');
+
+ax.set_yscale('log');
+ax.set_ylabel("Retail price (2021 $)");
+
+ax.legend(loc='upper left');
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_53_0.png)</center>
+
+
+The predictions seem reasonable. We now plot the posterior distribution of the regression coefficients.
+
+
+```python
+az.plot_posterior(pooled_trace, var_names=["β0", "β_pieces"]);
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_55_0.png)</center>
+
+
+When we break down the residuals for a few notable themes, we see that Star Wars and Disney sets have larger residuals than Creator sets with the corresponding number of pieces.
+
+
+```python
+ax = sns.scatterplot(x="Pieces", y="pooled_resid", data=df,
+                     alpha=0.1)
+
+for theme in ["Star Wars", "Creator", "Disney"]:
+    sns.scatterplot(x="Pieces", y="pooled_resid",
+                    data=df[df["Theme"] == theme],
+                    alpha=0.5, label=f"{theme} sets",
+                    ax=ax);
+
+ax.set_xscale('log');
+ax.set_xlabel("Pieces");
+
+ax.set_ylabel("Log RRP residual (2021 $)");
+
+ax.set_title("Pooled model");
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_57_0.png)</center>
+
+
+This difference in the distribution of residuals across themes suggests that we introduce theme-specific factors into our model.
+
+### Unpooled model
+ 
+In order to introduce theme-specific factors, we create indicator variables for each theme.
+
+
+```python
+theme_id, theme_map = df["Theme"].factorize(sort=True)
+n_theme = theme_map.size
+
+theme_id_ = shared(theme_id)
+```
+
+The simplest model that includes theme-specific factors is an unpooled model that consists of independent regressions per theme.  With $j(i)$ denoting the index of the theme of the $i$-th set, we have the model
+
+$$\log\left(f_i(X_i)\right) = \beta_{0, j(i)} + \beta_{j(i)} \tilde{x}_i$$
+
+with the [i.i.d.](https://en.wikipedia.org/wiki/Independent_and_identically_distributed_random_variables) priors
+
+$$
+\begin{align*}
+    \beta_{0, 1}, \ldots \beta_{0, n_j}
+        & \sim N(0, 2.5^2) \\
+    \beta_1, \ldots \beta_{n_j}
+        & \sim N(0, 2.5^2) \\
+    \sigma_1, \ldots, \sigma_{n_j}
+        & \sim \textrm{HalfNormal}(5^2).
+\end{align*}
+$$
+
+
+```python
+std_log_pieces_.set_value(std_log_pieces)
+```
+
+
+```python
+with pm.Model() as unpooled_model:
+    β0 = pm.Normal("β0", 0., 2.5, shape=n_theme)
+    β_pieces = pm.Normal("β_pieces", 0., 2.5, shape=n_theme)
+    
+    σ = pm.HalfNormal("σ", 5., shape=n_theme)
+    μ = β0[theme_id_] + β_pieces[theme_id_] * std_log_pieces_ \
+            - 0.5 * σ[theme_id_]**2
+    
+    obs = pm.Normal("obs", μ, σ[theme_id_], observed=log_rrp2021)
+```
+
+We don't actually sample from this model because it is underdetermined for many themes that have few sets associated with them, as the following plot shows.
+
+
+```python
+ax = (df["Theme"]
+        .value_counts()
+        .nsmallest(n=20)
+        .plot.barh())
+
+ax.set_xlabel("Number of sets");
+ax.set_ylabel("Theme");
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_65_0.png)</center>
+
+
+There are five themes with only a single set, and a number of themes with fewer than five sets total.  Regression models with only a single data point are underdetermined, and those with few observations are likely to have wide error bars.  Instead of imposing a minimum number of sets per theme and then using an unpooled model, we will use a partially pooled model to share some information across themes/regularize while allowing themes with many sets to deviate from the average if the data indicate that they should.
+
+### Partially pooled model
+ 
+One model that shares information across themes is called "partially pooled" (it may also be called multilevel or hierarchical).  In the partially pooled model, the intercept and piece coefficient for each theme are drawn not from i.i.d normal distributions but from a normal distribution with a common mean and variance.  This shared hyperprior distribution regularizes the theme intercepts and coefficients, shrinking those for themes with fewer sets towards the pooled values.
+
+Conceptually, we use the priors
+
+$$
+\begin{align*}
+    \mu_{\beta_0}
+        & \sim N(0, 2.5^2) \\
+    \sigma_{\beta_0}
+        & \sim \textrm{HalfNormal}(2.5^2) \\
+    \beta_{0, 1}, \ldots, \beta_{0, n_j}
+        & \sim N\left(\mu_{\beta_0}, \sigma_{\beta_0}^2\right)
+\end{align*}
+$$
+
+and similarly for $\beta$.  In reality, we use a [non-centered parametrization](https://twiecki.io/blog/2017/02/08/bayesian-hierchical-non-centered/) parameterization that is mathematically equivalent but often more computationally efficient.
+
+
+```python
+def hierarchical_normal(name, shape, μ=None):
+    if μ is None:
+        μ = pm.Normal(f"μ_{name}", 0., 2.5)
+
+    Δ = pm.Normal(f"Δ_{name}", 0., 1., shape=shape)
+    σ = pm.HalfNormal(f"σ_{name}", 2.5)
+    
+    return pm.Deterministic(name, μ + Δ * σ)
+```
+
+
+```python
+with pm.Model() as partial_model:
+    β0 = hierarchical_normal("β0", n_theme)
+    β_pieces = hierarchical_normal("β_pieces", n_theme)
+    
+    σ = pm.HalfNormal("σ", 5.)
+    μ = β0[theme_id_] + β_pieces[theme_id_] * std_log_pieces_ \
+            - 0.5 * σ**2
+    
+    obs = pm.Normal("obs", μ, σ, observed=log_rrp2021)
+```
+
+
+```python
+with partial_model:
+    partial_trace = pm.sample(**SAMPLE_KWARGS)
+```
+
+    Auto-assigning NUTS sampler...
+    Initializing NUTS using jitter+adapt_diag...
+    Multiprocess sampling (3 chains in 3 jobs)
+    NUTS: [μ_β0, Δ_β0, σ_β0, μ_β_pieces, Δ_β_pieces, σ_β_pieces, σ]
+
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='6000' class='' max='6000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [6000/6000 03:15<00:00 Sampling 3 chains, 0 divergences]
+</div>
+
+
+
+    Sampling 3 chains for 1_000 tune and 1_000 draw iterations (3_000 + 3_000 draws total) took 196 seconds.
+    The estimated number of effective samples is smaller than 200 for some parameters.
+
+
+Again our diagnostics show no cause for concern.
+
+
+```python
+make_diagnostic_plots(partial_trace);
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_72_0.png)</center>
+
+
+After calculating the residuals for the partially pooled model we see that they tend to be closer to zero and the diagonal bands are less pronounced.
+
+
+```python
+with partial_model:
+    pp_trace_data = pm.sample_posterior_predictive(partial_trace)
+    
+df["partial_resid"] = (log_rrp2021 - pp_trace_data["obs"]).mean(axis=0)
+```
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='3000' class='' max='3000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [3000/3000 00:02<00:00]
+</div>
+
+
+
+
+```python
+fig, axes = plt.subplots(ncols=2, sharex=True, sharey=True,
+                         figsize=(14, 6))
+
+sns.scatterplot(x="Pieces", y="pooled_resid", data=df,
+                alpha=0.1, ax=axes[0]);
+
+axes[0].set_xscale('log');
+axes[0].set_xlabel("Pieces");
+
+axes[0].set_ylabel("Log RRP residual (2021 $)");
+
+axes[0].set_title("Pooled model");
+
+sns.scatterplot(x="Pieces", y="partial_resid", data=df,
+                alpha=0.1, ax=axes[1]);
+
+axes[1].set_xscale('log');
+axes[1].set_xlabel("Pieces");
+
+axes[1].set_ylabel("Log RRP residual (2021 $)");
+
+axes[1].set_title("Partially pooled model");
+
+fig.tight_layout();
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_75_0.png)</center>
+
+
+We also see that the residuals for the example themes (Star Wars, Creator, and Disney) are more comingled than for the pooled model.
+
+
+```python
+fig, axes = plt.subplots(ncols=2, sharex=True, sharey=True,
+                         figsize=(14, 6))
+
+sns.scatterplot(x="Pieces", y="pooled_resid", data=df,
+                alpha=0.1, ax=axes[0]);
+
+for theme in ["Star Wars", "Creator", "Disney"]:
+    sns.scatterplot(x="Pieces", y="pooled_resid",
+                    data=df[df["Theme"] == theme],
+                    alpha=0.5, label=f"{theme} sets",
+                    ax=axes[0]);
+
+axes[0].set_xscale('log');
+axes[0].set_xlabel("Pieces");
+
+axes[0].set_ylabel("Log RRP residual (2021 $)");
+
+axes[0].set_title("Pooled model");
+
+sns.scatterplot(x="Pieces", y="partial_resid", data=df,
+                alpha=0.1, ax=axes[1]);
+
+for theme in ["Star Wars", "Creator", "Disney"]:
+    sns.scatterplot(x="Pieces", y="partial_resid",
+                    data=df[df["Theme"] == theme],
+                    alpha=0.5, label=f"{theme} sets",
+                    ax=axes[1]);
+
+axes[1].set_xscale('log');
+axes[1].set_xlabel("Pieces");
+
+axes[1].set_ylabel("Log RRP residual (2021 $)");
+
+axes[1].set_title("Partially pooloed model");
+
+fig.tight_layout();
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_77_0.png)</center>
+
+
+Now that we have posterior samples from two models, we use Pareto-smoothed importance sampling leave-one-out cross validation^[Vehtari, A., Gelman, A., & Gabry, J. (2017). [Practical Bayesian model evaluation using leave-one-out cross-validation and WAIC.](https://arxiv.org/abs/1507.04544) (PSIS-LOO) to compare them.) _Statistics and computing_, 27(5), 1413-1432.]
+
+
+```python
+traces = {
+    "Unpooled": pooled_trace,
+    "Partially pooled": partial_trace
+}
+```
+
+
+```python
+comp_df = az.compare(traces)
+```
+
+
+```python
+comp_df.loc[:, :"weight"]
+```
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>rank</th>
+<th>loo</th>
+<th>p_loo</th>
+<th>d_loo</th>
+<th>weight</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>Partially pooled</th>
+<td>0</td>
+<td>-2315.578245</td>
+<td>190.594364</td>
+<td>0.000000</td>
+<td>0.99951</td>
+</tr>
+<tr>
+<th>Unpooled</th>
+<td>1</td>
+<td>-5133.311893</td>
+<td>4.871287</td>
+<td>2817.733648</td>
+<td>0.00049</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center><br>
+
+
+
+
+```python
+fig, ax = plt.subplots(figsize=(12, 6))
+
+az.plot_compare(comp_df, plot_ic_diff=False, ax=ax);
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_82_0.png)</center>
+
+
+The table and chart show that by sharing some information across themes while also incorporating their varying effects the partially pooled model has substantially better predictive accuracy than the pooled model (higher values of `loo` correspond to better predictive ability).
+
+In order to compare the posterior predictions of the pooled and partially pooled model directly, we need to define a grid over theme/standardized log piece combinations.
+
+
+```python
+pp_df = pd.DataFrame.from_records(
+    itl.product(range(n_theme), pp_std_log_pieces),
+    columns=["theme_id", "std_log_pieces"]
+)
+pp_df["theme"] = theme_map[pp_df["theme_id"].values]
+pp_df["pieces"] = np.exp(
+    scaler.inverse_transform(pp_df["std_log_pieces"]
+                                  .values[:, np.newaxis])
+          .ravel()
+)
+```
+
+
+```python
+pp_df.head()
+```
+
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>theme_id</th>
+<th>std_log_pieces</th>
+<th>theme</th>
+<th>pieces</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>0</th>
+<td>0</td>
+<td>-2.373432</td>
+<td>4 Juniors</td>
+<td>10.000000</td>
+</tr>
+<tr>
+<th>1</th>
+<td>0</td>
+<td>-2.252260</td>
+<td>4 Juniors</td>
+<td>11.550805</td>
+</tr>
+<tr>
+<th>2</th>
+<td>0</td>
+<td>-2.131088</td>
+<td>4 Juniors</td>
+<td>13.342109</td>
+</tr>
+<tr>
+<th>3</th>
+<td>0</td>
+<td>-2.009916</td>
+<td>4 Juniors</td>
+<td>15.411210</td>
+</tr>
+<tr>
+<th>4</th>
+<td>0</td>
+<td>-1.888744</td>
+<td>4 Juniors</td>
+<td>17.801188</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center><br>
+
+
+
+
+```python
+pp_df.tail()
+```
+
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>theme_id</th>
+<th>std_log_pieces</th>
+<th>theme</th>
+<th>pieces</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>6545</th>
+<td>130</td>
+<td>3.079305</td>
+<td>Znap</td>
+<td>6569.786072</td>
+</tr>
+<tr>
+<th>6546</th>
+<td>130</td>
+<td>3.200477</td>
+<td>Znap</td>
+<td>7588.631734</td>
+</tr>
+<tr>
+<th>6547</th>
+<td>130</td>
+<td>3.321649</td>
+<td>Znap</td>
+<td>8765.480484</td>
+</tr>
+<tr>
+<th>6548</th>
+<td>130</td>
+<td>3.442820</td>
+<td>Znap</td>
+<td>10124.835517</td>
+</tr>
+<tr>
+<th>6549</th>
+<td>130</td>
+<td>3.563992</td>
+<td>Znap</td>
+<td>11695.000000</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+
+
+
+
+```python
+std_log_pieces_.set_value(pp_df["std_log_pieces"].values)
+theme_id_.set_value(pp_df["theme_id"].values)
+```
+
+We now sample from the posterior predictive distribution and compare the predictions to those from the pooled model.
+
+
+```python
+with partial_model:
+    partial_pp_trace = pm.sample_posterior_predictive(partial_trace)
+```
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='3000' class='' max='3000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [3000/3000 00:02<00:00]
+</div>
+
+
+
+
+```python
+pp_df["pp_partial_mean"] = np.exp(partial_pp_trace["obs"]).mean(axis=0)
+pp_df["pp_partial_low"], pp_df["pp_partial_high"] = np.percentile(
+    np.exp(partial_pp_trace["obs"]),
+    [2.5, 97.5],
+    axis=0
+)
+```
+
+
+```python
+pp_df.head()
+```
+
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>theme_id</th>
+<th>std_log_pieces</th>
+<th>theme</th>
+<th>pieces</th>
+<th>pp_partial_mean</th>
+<th>pp_partial_low</th>
+<th>pp_partial_high</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>0</th>
+<td>0</td>
+<td>-2.373432</td>
+<td>4 Juniors</td>
+<td>10.000000</td>
+<td>5.214650</td>
+<td>2.380664</td>
+<td>10.484612</td>
+</tr>
+<tr>
+<th>1</th>
+<td>0</td>
+<td>-2.252260</td>
+<td>4 Juniors</td>
+<td>11.550805</td>
+<td>5.917360</td>
+<td>2.668467</td>
+<td>11.413480</td>
+</tr>
+<tr>
+<th>2</th>
+<td>0</td>
+<td>-2.131088</td>
+<td>4 Juniors</td>
+<td>13.342109</td>
+<td>6.864103</td>
+<td>3.045283</td>
+<td>13.610948</td>
+</tr>
+<tr>
+<th>3</th>
+<td>0</td>
+<td>-2.009916</td>
+<td>4 Juniors</td>
+<td>15.411210</td>
+<td>7.653877</td>
+<td>3.515344</td>
+<td>14.966362</td>
+</tr>
+<tr>
+<th>4</th>
+<td>0</td>
+<td>-1.888744</td>
+<td>4 Juniors</td>
+<td>17.801188</td>
+<td>8.679962</td>
+<td>4.009006</td>
+<td>16.935274</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center><br>
+
+
+
+
+```python
+ax = sns.scatterplot(x="Pieces", y="RRP2021", data=df,
+                alpha=0.05);
+
+(pp_df.groupby("theme_id")
+      .plot("pieces", "pp_partial_mean",
+            c='k', alpha=0.1, label='_nolegend_',
+            ax=ax));
+ax.plot(pp_pieces, np.exp(pooled_pp_trace["obs"]).mean(axis=0),
+        c='r', lw=2, label="Pooled");
+
+ax.set_xscale('log');
+
+ax.set_yscale('log');
+ax.set_ylabel("Retail price (2021 $)");
+
+handles, _ = ax.get_legend_handles_labels()
+partial_line = Line2D([0], [0], color='k',
+                      label="Partially pooled")
+handles.append(partial_line)
+
+ax.legend(handles=handles,
+          title="Posterior predicted mean",
+          loc='upper left');
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_92_0.png)</center>
+
+
+Note that the partial pooling model produces one line per theme, with varying slopes and intercepts.  We can see that while the predictions for some themes are quite far away from the pooled predictions most are close to them, as shown by the stacking of the semi-transparent lines.  Below we highlight the partially pooled predictions for a few themes of interest among all partially pooled predictions.
+
+
+```python
+PLOT_THEMES = [
+    "Creator Expert",
+    "Disney",
+    "Star Wars",
+    "Harry Potter",
+    "Marvel Super Heroes",
+    "Ninjago",
+    "City",
+    "Space",
+    "Jurassic World"
+]
+```
+
+
+```python
+ax = sns.scatterplot(x="Pieces", y="RRP2021", data=df,
+                alpha=0.05);
+
+(pp_df.groupby("theme_id")
+      .plot("pieces", "pp_partial_mean",
+            c='k', alpha=0.1, label='_nolegend_',
+            ax=ax));
+(pp_df[pp_df["theme"].isin(PLOT_THEMES)]
+      .groupby("theme_id")
+      .plot("pieces", "pp_partial_mean",
+            c='r', label='_nolegend_',
+            ax=ax));
+
+ax.set_xscale('log');
+
+ax.set_yscale('log');
+ax.set_ylabel("Retail price (2021 $)");
+
+title = "Highlighted: " \
+            + ", ".join(PLOT_THEMES[:4]) + ",\n" \
+            + ", ".join(PLOT_THEMES[4:-1]) \
+            + ", and " + PLOT_THEMES[-1]
+ax.set_title(title);
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_95_0.png)</center>
+
+
+These notable themes have preditions close to the global average, which makes sense since they all have a fair number of sets, so the global mean is pulled towards their theme effects.
+
+It has long been known in the quantitative social sciences that when naively modeled (as we have) that group-level effects (in this case theme-level effects), can strongly correlate with item-level covariates (in this case standardized log pieces).  We now investigate whether our partially pooled model results in such a correlation.
+
+First we calculate the average value of `std_log_pieces` within each theme.
+
+
+```python
+theme_mean_std_log_pieces = (pd.Series(std_log_pieces, index=df.index)
+                               .groupby(df["Theme"])
+                               .mean())
+```
+
+
+```python
+ax = theme_mean_std_log_pieces.plot.hist(bins=20, lw=0., alpha=0.5)
+
+ax.set_xlabel("Average standardized log pieces\nper set within theme");
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_98_0.png)</center>
+
+
+We see that these theme averages vary fairly widely.  The following plots show the relationship between each theme's average standardized log pieces and the posterior expected values of $\beta_{0, j}$ and $\beta_j$ respectively.
+
+
+```python
+post_β0 = partial_trace["posterior"]["β0"].mean(dim=('chain', 'draw'))
+post_β_pieces = partial_trace["posterior"]["β_pieces"].mean(dim=('chain', 'draw'))
+```
+
+
+```python
+fig, (β0_ax, β_pieces_ax) = plt.subplots( 
+    ncols=2, sharex=True, sharey=False,
+    figsize=(15, 6)
+)
+
+β0_ax.scatter(theme_mean_std_log_pieces, post_β0);
+
+β0_ax.set_xlabel("Average standardized log pieces\nper set within theme");
+β0_ax.set_ylabel("Posterior expected\nvalue of $\\beta_0$");
+ 
+β0_corr, β0_corr_p_val = sp.stats.pearsonr(
+    theme_mean_std_log_pieces.values,
+    post_β0
+)
+β0_ax.set_title(f"Correlation coefficient = {β0_corr:0.2f}\n"
+                f"Two-tailed p-value {β0_corr_p_val:.2e}");
+
+β_pieces_ax.scatter(theme_mean_std_log_pieces, post_β_pieces);
+
+β_pieces_ax.set_xlabel("Average standardized log pieces\nper set within theme");
+β_pieces_ax.set_ylabel("Posterior expected\nvalue of $\\beta_{pieces}$");
+
+β_pieces_corr, β_pieces_corr_p_val = sp.stats.pearsonr(
+    theme_mean_std_log_pieces.values,
+    post_β_pieces
+)
+β_pieces_ax.set_title(f"Correlation coefficient = {β_pieces_corr:0.2f}\n"
+                      f"Two-tailed p-value {β_pieces_corr_p_val:.2e}");
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_101_0.png)</center>
+
+
+Both plots show highly significant correlations, with a stronger correlation between the theme average and the posterior expected average of $\beta_{0, j}$.  These correlations lead to violations of the [Gauss-Markov assumptions](https://en.wikipedia.org/wiki/Gauss%E2%80%93Markov_theorem) in our regression design, so we remedy them with an expanded model in the next section.
+
+### Partially pooled mean model
+
+Fortunately Bafumi and Gelman^[Bafumi, J., & Gelman, A. E. (2006). [Fitting multilevel models when predictors and group effects correlate.](http://www.stat.columbia.edu/~gelman/research/unpublished/Bafumi_Gelman_Midwest06.pdf)] show how to remedy this violation by including the theme-level average standardized log pieces as a covariate in $\beta_{0, j}$ and $\beta_j$. if we denote the average standardized log pieces for sets in the $j$-th theme as $\bar{\tilde{x}}_j$, in this extended model, $\beta_{0, j}$ is defined as
+
+$$
+\begin{align*}
+    \mu_{\beta_0}, \gamma_{\beta, 0}
+        & \sim N(0, 2.5^2) \\
+    \sigma_{\beta_0}
+        & \sim \textrm{HalfNormal}(2.5^2) \\
+    \beta_{0, j}
+        & \sim N\left(\mu_{\beta_0} + \gamma_{\beta, 0} \cdot \bar{\tilde{x}}_j, \sigma_{\beta_0}^2\right),
+\end{align*}
+$$
+
+and similarly for $\beta_j$.
+
+
+```python
+def hierarchical_normal_with_mean(name, x_mean, shape, μ=None):
+    γ = pm.Normal(f"γ_{name}", 0., 2.5)
+        
+    return hierarchical_normal(name, shape, μ=μ) + γ * x_mean
+```
+
+
+```python
+with pm.Model() as mean_model:
+    σ = pm.HalfNormal("σ", 5.)
+    
+    β0 = hierarchical_normal_with_mean(
+        "β0", at.constant(theme_mean_std_log_pieces),
+        n_theme
+    )
+    β_pieces = hierarchical_normal_with_mean(
+        "β_pieces", at.constant(theme_mean_std_log_pieces),
+        n_theme
+    )
+    
+    μ = β0[theme_id_] + β_pieces[theme_id_] * std_log_pieces_ \
+            - 0.5 * σ**2
+    
+    obs = pm.Normal("obs", μ, σ, observed=log_rrp2021)
+```
+
+We now sample from this model.
+
+
+```python
+std_log_pieces_.set_value(std_log_pieces)
+theme_id_.set_value(theme_id)
+```
+
+
+```python
+with mean_model:
+    mean_trace = pm.sample(**SAMPLE_KWARGS)
+```
+
+    Auto-assigning NUTS sampler...
+    Initializing NUTS using jitter+adapt_diag...
+    Multiprocess sampling (3 chains in 3 jobs)
+    NUTS: [σ, γ_β0, μ_β0, Δ_β0, σ_β0, γ_β_pieces, μ_β_pieces, Δ_β_pieces, σ_β_pieces]
+
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='6000' class='' max='6000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [6000/6000 03:57<00:00 Sampling 3 chains, 0 divergences]
+</div>
+
+
+
+    Sampling 3 chains for 1_000 tune and 1_000 draw iterations (3_000 + 3_000 draws total) took 239 seconds.
+    The number of effective samples is smaller than 10% for some parameters.
+
+
+Once again the sampling diagnostics show no cause for concern.
+
+
+```python
+make_diagnostic_plots(mean_trace);
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_110_0.png)</center>
+
+
+The correlations from above have disappeared in this model.
+
+
+```python
+post_β0 = mean_trace["posterior"]["β0"].mean(dim=('chain', 'draw'))
+post_β_pieces = mean_trace["posterior"]["β_pieces"].mean(dim=('chain', 'draw'))
+```
+
+
+```python
+fig, (β0_ax, β_pieces_ax) = plt.subplots( 
+    ncols=2, sharex=True, sharey=False,
+    figsize=(15, 6)
+)
+
+β0_ax.scatter(theme_mean_std_log_pieces, post_β0);
+
+β0_ax.set_xlabel("Average standardized log pieces\nper set within theme");
+β0_ax.set_ylabel("Posterior expected\nvalue of $\\beta_0$");
+ 
+β0_corr, β0_corr_p_val = sp.stats.pearsonr(
+    theme_mean_std_log_pieces.values,
+    post_β0
+)
+β0_ax.set_title(f"Correlation coefficient = {β0_corr:0.2f}\n"
+                f"Two-tailed p-value {β0_corr_p_val:.2f}");
+
+β_pieces_ax.scatter(theme_mean_std_log_pieces, post_β_pieces);
+
+β_pieces_ax.set_xlabel("Average standardized log pieces\nper set within theme");
+β_pieces_ax.set_ylabel("Posterior expected\nvalue of $\\beta_{pieces}$");
+
+β_pieces_corr, β_pieces_corr_p_val = sp.stats.pearsonr(
+    theme_mean_std_log_pieces.values,
+    post_β_pieces
+)
+β_pieces_ax.set_title(f"Correlation coefficient = {β_pieces_corr:0.2f}\n"
+                      f"Two-tailed p-value {β_pieces_corr_p_val:.2f}");
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_113_0.png)</center>
+
+
+We add this model to our comparison.
+
+
+```python
+traces["Partially pooled with mean"] = mean_trace
+```
+
+
+```python
+comp_df = az.compare(traces)
+```
+
+
+```python
+comp_df.loc[:, :"weight"]
+```
+
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>rank</th>
+<th>loo</th>
+<th>p_loo</th>
+<th>d_loo</th>
+<th>weight</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>Partially pooled</th>
+<td>0</td>
+<td>-2315.578245</td>
+<td>190.594364</td>
+<td>0.000000</td>
+<td>0.958583</td>
+</tr>
+<tr>
+<th>Partially pooled with mean</th>
+<td>1</td>
+<td>-2316.840059</td>
+<td>187.512592</td>
+<td>1.261814</td>
+<td>0.000000</td>
+</tr>
+<tr>
+<th>Unpooled</th>
+<td>2</td>
+<td>-5133.311893</td>
+<td>4.871287</td>
+<td>2817.733648</td>
+<td>0.041417</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center><br>
+
+
+
+
+```python
+fig, ax = plt.subplots(figsize=(12, 6))
+
+az.plot_compare(comp_df, plot_ic_diff=False, ax=ax);
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_118_0.png)</center>
+
+
+We see that the the PSIS-LOO scores of both partially pooled model are better than the pooled model and statistically indistinguishable from each other. Given these scores, we will work with the model that accounts for the theme's average standardized log pieces going forward, since it satisfies the Gauss-Markov assumptions better.
+
+The residuals from the two partially pooled models are also visually quite similar, though the second partial pooling model does have less pronounced diagonal bands.
+
+
+```python
+with mean_model:
+    pp_trace_data = pm.sample_posterior_predictive(mean_trace)
+
+df["mean_resid"] = (log_rrp2021 - pp_trace_data["obs"]).mean(axis=0)
+```
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='3000' class='' max='3000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [3000/3000 00:01<00:00]
+</div>
+
+
+
+
+```python
+fig, axes = plt.subplots(ncols=2, sharex=True, sharey=True,
+                         figsize=(14, 6))
+
+sns.scatterplot(x="Pieces", y="pooled_resid", data=df,
+                alpha=0.1, ax=axes[0]);
+
+axes[0].set_xscale('log');
+axes[0].set_xlabel("Pieces");
+
+axes[0].set_ylabel("Log RRP residual (2021 $)");
+
+axes[0].set_title("Partially pooled model");
+
+sns.scatterplot(x="Pieces", y="mean_resid", data=df,
+                alpha=0.1, ax=axes[1]);
+
+axes[1].set_xscale('log');
+axes[1].set_xlabel("Pieces");
+
+axes[1].set_ylabel("Log RRP residual (2021 $)");
+
+axes[1].set_title("Partially pooled mean model");
+
+fig.tight_layout();
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_121_0.png)</center>
+
+
+Interestingly, there is more variation in the varying intercepts ($\beta_{0, j}$) than the varying slopes ($\beta_j$), since $\sigma_{\beta_0}$ has a larger posterior expected value than $\sigma_{\beta}$.
+
+
+```python
+az.plot_posterior(mean_trace,
+                  var_names=[
+                      "μ_β0", "μ_β_pieces",
+                      "σ_β0", "σ_β_pieces"
+                  ],
+                  grid=(2, 2));
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_123_0.png)</center>
+
+
+Plotting the residuals of log RRP in 2021 dollars versus time shows that the residuals for this model are significantly larger for sets between 1980 and 1995.  This phenomenon makes sense as Lego has released many more sets per year after 1995 than in the initial period, so the estimates are dominated by the data in this later period.
+
+
+```python
+ax = (df.groupby(level="Year released")
+        ["mean_resid"]
+        .mean()
+        .plot(c='k', label="Year average"));
+
+strip_ax = ax.twiny()
+sns.stripplot(x="Year released", y="mean_resid",
+              data=df.reset_index(),
+              jitter=1.5,
+              color='C0', alpha=0.1,
+              ax=strip_ax);
+
+strip_ax.set_axis_off();
+
+ax.set_ylim(-2, 2);
+ax.set_ylabel("Log RRP residual (2021 $)");
+
+ax.legend(loc='upper left');
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_125_0.png)</center>
+
+
+### Time-varying model
+
+We address this issue with the residuals by adding a time-varying component to $\beta_0$.  First we build `t`, which indicates the number of years after the data begins in 1980 that the set was released.
+
+
+```python
+year = df.index.get_level_values("Year released").year.values
+t = year - year.min()
+t_ = shared(t)
+n_year = int(t.max() + 1)
+```
+
+The prior on $\beta_j$ stays the same as in the mean model, but we add a Gaussian random walk term, $\beta_{0, t}$ to the intercept, $\beta_0$.  We use the priors
+
+$$
+\begin{align*}
+    \mu_{\beta_{0, pieces}}, \gamma_{\beta_{0, pieces}}
+        & \sim N(0, 2.5^2) \\
+    \sigma_{\beta_{0, pieces}}
+        & \sim \textrm{HalfNormal}(2.5^2) \\
+    \Delta_{\beta_{0, i}}
+        & \sim N(0, 0.25^2) \\
+    \beta_{0, t}
+        & \sim \sum_{i = 1}^t \Delta_{\beta_{0, i}} \\
+    \beta_{0, j, t}
+        & \sim N\left(\mu_{\beta_0} + \beta_{0, t} + \gamma_{\beta, 0} \cdot \bar{\tilde{x}}_j, \sigma_{\beta_0}^2\right).
+\end{align*}
+$$
+
+We see that the time-varying factor $\beta_{0, t}$ is constant across themes in order to reduce the computational burden when sampling from this model.
+
+
+```python
+with pm.Model() as time_model:
+    Δ_β0_t = pm.Normal("Δ_β0_t", 0., 0.25, shape=n_year)
+    β0_t = pm.Deterministic("β0_t", Δ_β0_t.cumsum())
+    
+    β0_theme = hierarchical_normal_with_mean(
+        "β0_theme", at.constant(theme_mean_std_log_pieces),
+        n_theme
+    )
+    β0_i = β0_t[t_] + β0_theme[theme_id_]
+
+    β_pieces = hierarchical_normal_with_mean(
+        "β_pieces", at.constant(theme_mean_std_log_pieces),
+        n_theme
+    )
+    
+    σ = pm.HalfNormal("σ", 5.)
+    μ = β0_i + β_pieces[theme_id_] * std_log_pieces_ - 0.5 * σ**2
+    
+    obs = pm.Normal("obs", μ, σ, observed=log_rrp2021)
+```
+
+We now sample from this model.
+
+
+```python
+with time_model:
+    time_trace = pm.sample(**SAMPLE_KWARGS)
+```
+
+    Auto-assigning NUTS sampler...
+    Initializing NUTS using jitter+adapt_diag...
+    Multiprocess sampling (3 chains in 3 jobs)
+    NUTS: [Δ_β0_t, γ_β0_theme, μ_β0_theme, Δ_β0_theme, σ_β0_theme, γ_β_pieces, μ_β_pieces, Δ_β_pieces, σ_β_pieces, σ]
+
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='6000' class='' max='6000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [6000/6000 17:36<00:00 Sampling 3 chains, 0 divergences]
+</div>
+
+
+
+    Sampling 3 chains for 1_000 tune and 1_000 draw iterations (3_000 + 3_000 draws total) took 1056 seconds.
+    The number of effective samples is smaller than 25% for some parameters.
+
+
+Once again the sampling diagnostics show no cause for concern.
+
+
+```python
+make_diagnostic_plots(time_trace);
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_133_0.png)</center>
+
+
+We see that the time-varying model performs noticeably better than the other models in terms of PSIS-LOO score.
+
+
+```python
+traces["Partially pooled with mean and time"] = time_trace
+```
+
+
+```python
+comp_df = az.compare(traces)
+```
+
+
+```python
+comp_df.loc[:, :"weight"]
+```
+
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>rank</th>
+<th>loo</th>
+<th>p_loo</th>
+<th>d_loo</th>
+<th>weight</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>Partially pooled with mean and time</th>
+<td>0</td>
+<td>-2058.373203</td>
+<td>245.239325</td>
+<td>0.000000</td>
+<td>9.205189e-01</td>
+</tr>
+<tr>
+<th>Partially pooled</th>
+<td>1</td>
+<td>-2315.578245</td>
+<td>190.594364</td>
+<td>257.205042</td>
+<td>4.565283e-02</td>
+</tr>
+<tr>
+<th>Partially pooled with mean</th>
+<td>2</td>
+<td>-2316.840059</td>
+<td>187.512592</td>
+<td>258.466855</td>
+<td>1.857221e-12</td>
+</tr>
+<tr>
+<th>Unpooled</th>
+<td>3</td>
+<td>-5133.311893</td>
+<td>4.871287</td>
+<td>3074.938690</td>
+<td>3.382830e-02</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center><br>
+
+
+
+
+```python
+fig, ax = plt.subplots(figsize=(12, 6))
+
+az.plot_compare(comp_df, plot_ic_diff=False, ax=ax);
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_138_0.png)</center>
+
+
+The residuals for this model are similar to those of the previous one when plotted against the number of pieces in the set.
+
+
+```python
+with time_model:
+    pp_time_data = pm.sample_posterior_predictive(time_trace)
+
+df["time_resid"] = (log_rrp2021 - pp_time_data["obs"]).mean(axis=0)
+```
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='3000' class='' max='3000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [3000/3000 00:02<00:00]
+</div>
+
+
+
+
+```python
+fig, axes = plt.subplots(ncols=2, sharex=True, sharey=True,
+                         figsize=(14, 6))
+
+sns.scatterplot(x="Pieces", y="mean_resid", data=df,
+                alpha=0.1, ax=axes[0]);
+
+axes[0].set_xscale('log');
+axes[0].set_xlabel("Pieces");
+
+axes[0].set_ylabel("Log RRP residual (2021 $)");
+
+axes[0].set_title("Partially pooled mean model");
+
+sns.scatterplot(x="Pieces", y="time_resid", data=df,
+                alpha=0.1, ax=axes[1]);
+
+axes[1].set_xscale('log');
+axes[1].set_xlabel("Pieces");
+
+axes[1].set_ylabel("Log RRP residual (2021 $)");
+
+axes[1].set_title("Partially pooled mean model with time");
+
+fig.tight_layout();
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_141_0.png)</center>
+
+
+The following plot shows that this model has significantly reduced the amount of time-dependence in the residuals.
+
+
+```python
+ax = (df.groupby(level="Year released")
+        ["time_resid"]
+        .mean()
+        .plot(c='k', label="Year average"));
+
+strip_ax = ax.twiny()
+sns.stripplot(x="Year released", y="time_resid",
+              data=df.reset_index(),
+              jitter=1.5,
+              color='C0', alpha=0.1,
+              ax=strip_ax);
+
+strip_ax.set_axis_off();
+
+ax.set_ylim(-2, 2);
+ax.set_ylabel("Log RRP residual (2021 $)");
+
+ax.legend(loc='upper left');
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_143_0.png)</center>
+
+
+Again, there is more variation in the varying intercepts ($\beta_{0, j}$) than the varying slopes ($\beta_j$), since $\sigma_{\beta_0}$ has a larger posterior expected value than $\sigma_{\beta}$.
+
+
+```python
+az.plot_posterior(time_trace,
+                  var_names=[
+                      "μ_β0_theme", "μ_β_pieces",
+                      "σ_β0_theme", "σ_β_pieces"
+                  ],
+                  grid=(2, 2));
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_145_0.png)</center>
+
+
+We now revisit the question of whether or not Darth Vader's Meditation Chamber is fairly priced.  In the previous post in this series, we compared the price per piece of this set to all sets, all Star Wars sets, and all sets currently in my collection.  We found that it was in or near the first quartile of price per piece among all sets and Star Wars sets, and near the median priece per piece in my collection.  With this model in hand, we can ask where the adjusted recommended retail price falls in the predicted distribution of posterior predicted prices for a Star Wars set with 663 pieces.
+
+
+```python
+VADER_MEDITATION = "75296-1"
+
+vader_info = df.xs(VADER_MEDITATION, level="Set number")
+vader_iloc = (df.index
+                .get_level_values("Set number")
+                .isin([VADER_MEDITATION])
+                .argmax())
+```
+
+
+```python
+(vader_info["RRP2021"].values[0] \
+    >= np.exp(pp_trace_data["obs"][:, vader_iloc])).mean()
+```
+
+
+
+
+```
+0.2816666666666667
+```
+
+
+
+The set falls in towards the bottom of the second quartile of predicted prices for such a set, which is consistent with the empirical price per piece analysis of the previous post.  This model can also answer some counterfactual questions about my collection.  We see that my sets are highly concentrated in the Star Wars theme, with a smattering of other themes represented as well.
+
+
+```python
+(df[df["austin"] == True]
+   ["Theme"]
+   .value_counts(ascending=True)
+   .plot.barh());
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_150_0.png)</center>
+
+
+This preponderance of Star Wars sets is even stronger than it initially appears because all but one of my BrickHeadz sets are Star Wars characters.  The single exception are the adorable German Shepherds ([40440](https://www.lego.com/en-us/product/german-shepherd-40440)).
+
+<center><img src="https://www.lego.com/cdn/cs/set/assets/blt5e9ef14c0a074aa4/40440.jpg" width=500></center>
+
+In particular, we can compare the actual cost of my collection to the predicted expected cost of my collection conditioned on the piece count and theme of the sets.
+
+
+```python
+coll_value = (df[df["austin"] == True]
+                ["RRP2021"]
+                .sum())
+```
+
+
+```python
+coll_value
+```
+
+
+
+
+```
+3206.3933684401236
+```
+
+
+
+
+```python
+(np.exp(pp_trace_data["obs"])
+                     [:, df["austin"] == True]
+                     .mean(axis=0)
+                     .sum())
+```
+
+
+
+
+```
+3826.537853977332
+```
+
+
+
+So my collection cost about 20% less than expected conditioned on piece count and theme.  (This figure actually understates my frugality as I have received several sets as gifts, notably the massive Super Star Destroyer ([10221](https://brickset.com/sets/10221-1/Super-Star-Destroyer)).)  We can easily check where my collection's actual value falls in the posterior predictive distribution of its possible values.
+
+
+```python
+pp_coll_value = (np.exp(pp_trace_data["obs"])
+                   [:, df["austin"] == True]
+                   .sum(axis=1))
+```
+
+
+```python
+ax, = (sns.displot(pp_coll_value, kind='kde',
+                   height=6, aspect=8 / 6,
+                   label="Posterior predictive distribution")
+          .axes.flatten())
+
+ax.axvline(coll_value, c='k', ls='--',
+           label="Actual value");
+
+ax.xaxis.set_major_formatter(dollar_formatter);
+ax.set_xlabel("Collection value (2021 $)");
+
+ax.set_yticks([]);
+
+ax.legend(loc='upper right');
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_158_0.png)</center>
+
+
+
+```python
+(coll_value > pp_coll_value).mean()
+```
+
+
+
+
+```
+0.007
+```
+
+
+
+My collection's actual value is in the first percentile of the posterior predictive distribution of possible collection values; according to this model, I really am quite cheap!
+
+It is worth noting that in this post we have modeled log price directly, not price per piece as in the last model. Those familiar with offset terms in offsets in generalizedl linear models will notice that the model we have specified can be equivalent to an model of (log) price per piece if we fix $\beta_j = 1$, since $\log\left(\frac{x}{y}\right) = \log x - \log y.$  The following plot shows how far outside the high density area of the posterior distribution of $\mu_{\beta_0}$ the value one is.
+
+
+```python
+az.plot_posterior(time_trace, var_names=["μ_β0_theme"], ref_val=1.);
+```
+
+
+<center>![png](/resources/lego_pymc3_files/lego_pymc3_161_0.png)</center>
+
+
+Due to this fact, we prefer to model (log) price directly over using an offset model that includes (log) piece count on both sides of the equal sign.
+
+Future posts will explore further inferences from this model and develop extended models using other attributes of each set available via Brickset.
+
+This post is available as a Jupyter notebook [here](https://nbviewer.jupyter.org/gist/AustinRochford/f75d687d383b0a884c7782af1419bcf9).
+
+
+```python
+%load_ext watermark
+%watermark -n -u -v -iv
+```
+
+    Last updated: Thu Jun 10 2021
+    
+    Python implementation: CPython
+    Python version       : 3.8.8
+    IPython version      : 7.22.0
+    
+    pandas    : 1.2.3
+    aesara    : 2.0.10
+    pymc3     : 4.0
+    scipy     : 1.6.2
+    seaborn   : 0.11.1
+    matplotlib: 3.4.1
+    arviz     : 0.11.2
+    numpy     : 1.20.2
+    
+

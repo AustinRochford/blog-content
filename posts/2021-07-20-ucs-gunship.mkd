@@ -1,0 +1,2012 @@
+---
+title: A Fair Price for the Republic Gunship? A Bayesian Analysis of Ultimate Collector Series Prices in Python with PyMC3
+tags: Lego, Python, PyMC3, Bayesian
+---
+
+Since my last [post](https://austinrochford.com/posts/2021-06-10-lego-pymc3.html) on modeling Lego prices, Lego has [announced](https://www.youtube.com/watch?v=vHx8oEI9rzY) the release of [73509](https://www.lego.com/en-us/product/republic-gunship-75309), an Ultimate Collector Series Republic Gunship from the Battle of Geonosis.
+
+<center>
+<table>
+<tr>
+<td><img src="https://www.lego.com/cdn/cs/set/assets/blt4b90c515304ac9da/75309_alt1.jpg" width=300/></td>
+<td><img src="https://static.wikia.nocookie.net/swfanon/images/c/cd/LAAT_Gunship.jpg" width=370 /></td>
+</tr>
+</table>
+</center>
+<br>
+
+As with [75296](https://www.lego.com/en-us/product/darth-vader-meditation-chamber-75296), Darth Vader Meditation Chamber, we can [ask](https://austinrochford.com/posts/2021-06-03-vader-meditation.html) whether the $349.99 recommended retail price of this set is fair given its number of pieces, Star Wars theme, and Ultimate Collector Series status.  This post will update the model from the previous one to include random effects for subtheme (in Lego collector jargon, the theme of 75309 is "Star Wars" and the subtheme is "Ultimate Collector Series") to answer this question.  In addition, we will explore the effect of different themes and subthemes on set prices.
+
+First we make some Python imports and do a bit of housekeeping.
+
+
+```python
+%matplotlib inline
+```
+
+
+```python
+import datetime
+from functools import reduce
+from warnings import filterwarnings
+```
+
+
+```python
+from aesara import shared, tensor as at
+import arviz as az
+from matplotlib import MatplotlibDeprecationWarning, pyplot as plt
+from matplotlib.ticker import StrMethodFormatter
+import numpy as np
+import pandas as pd
+import pymc3 as pm
+from sklearn.preprocessing import StandardScaler
+import seaborn as sns
+```
+
+    You are running the v4 development version of PyMC3 which currently still lacks key features. You probably want to use the stable v3 instead which you can either install via conda or find on the v3 GitHub branch: https://github.com/pymc-devs/pymc3/tree/v3
+
+
+
+```python
+filterwarnings('ignore', category=MatplotlibDeprecationWarning, module='pandas')
+filterwarnings('ignore', category=UserWarning, module='aesara')
+filterwarnings('ignore', category=UserWarning, module='arviz')
+filterwarnings('ignore', category=UserWarning, module='pandas')
+```
+
+
+```python
+FIGSIZE = (8, 6)
+
+plt.rcParams['figure.figsize'] = FIGSIZE
+sns.set(color_codes=True)
+
+dollar_formatter = StrMethodFormatter("${x:,.2f}")
+```
+
+## Load the Data
+
+We begin the real work by loading the data scraped from Brickset.  See the [first post](https://austinrochford.com/posts/2021-06-03-vader-meditation.html) in this series for more background on the data.
+
+
+```python
+DATA_URL = 'https://austinrochford.com/resources/lego/brickset_01011980_06012021.csv.gz'
+```
+
+
+```python
+def to_datetime(year):
+    return np.datetime64(f"{round(year)}-01-01")
+```
+
+
+```python
+full_df = (pd.read_csv(DATA_URL,
+                       usecols=[
+                           "Year released", "Set number",
+                           "Name", "Set type", "Theme", "Subtheme",
+                           "Pieces", "RRP"
+                       ])
+             .dropna(subset=[
+                 "Year released", "Set number",
+                 "Name", "Set type", "Theme",
+                 "Pieces", "RRP"
+             ]))
+full_df["Year released"] = full_df["Year released"].apply(to_datetime)
+full_df = (full_df.set_index(["Year released", "Set number"])
+                  .sort_index())
+```
+
+We see that the data set contains information on approximately 8,500 Lego sets produced between 1980 and June 2021.
+
+
+```python
+full_df.head()
+```
+
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th></th>
+<th>Name</th>
+<th>Set type</th>
+<th>Theme</th>
+<th>Pieces</th>
+<th>RRP</th>
+<th>Subtheme</th>
+</tr>
+<tr>
+<th>Year released</th>
+<th>Set number</th>
+<th></th>
+<th></th>
+<th></th>
+<th></th>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th rowspan="5" valign="top">1980-01-01</th>
+<th>1041-2</th>
+<td>Educational Duplo Building Set</td>
+<td>Normal</td>
+<td>Dacta</td>
+<td>68.0</td>
+<td>36.50</td>
+<td>NaN</td>
+</tr>
+<tr>
+<th>1075-1</th>
+<td>LEGO People Supplementary Set</td>
+<td>Normal</td>
+<td>Dacta</td>
+<td>304.0</td>
+<td>14.50</td>
+<td>NaN</td>
+</tr>
+<tr>
+<th>1101-1</th>
+<td>Replacement 4.5V Motor</td>
+<td>Normal</td>
+<td>Service Packs</td>
+<td>1.0</td>
+<td>5.65</td>
+<td>NaN</td>
+</tr>
+<tr>
+<th>1123-1</th>
+<td>Ball and Socket Couplings &amp; One Articulated Joint</td>
+<td>Normal</td>
+<td>Service Packs</td>
+<td>8.0</td>
+<td>16.00</td>
+<td>NaN</td>
+</tr>
+<tr>
+<th>1130-1</th>
+<td>Plastic Folder for Building Instructions</td>
+<td>Normal</td>
+<td>Service Packs</td>
+<td>1.0</td>
+<td>14.00</td>
+<td>NaN</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<br>
+
+
+
+```python
+full_df.tail()
+```
+
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th></th>
+<th>Name</th>
+<th>Set type</th>
+<th>Theme</th>
+<th>Pieces</th>
+<th>RRP</th>
+<th>Subtheme</th>
+</tr>
+<tr>
+<th>Year released</th>
+<th>Set number</th>
+<th></th>
+<th></th>
+<th></th>
+<th></th>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th rowspan="5" valign="top">2021-01-01</th>
+<th>80022-1</th>
+<td>Spider Queen's Arachnoid Base</td>
+<td>Normal</td>
+<td>Monkie Kid</td>
+<td>1170.0</td>
+<td>119.99</td>
+<td>Season 2</td>
+</tr>
+<tr>
+<th>80023-1</th>
+<td>Monkie Kid's Team Dronecopter</td>
+<td>Normal</td>
+<td>Monkie Kid</td>
+<td>1462.0</td>
+<td>149.99</td>
+<td>Season 2</td>
+</tr>
+<tr>
+<th>80024-1</th>
+<td>The Legendary Flower Fruit Mountain</td>
+<td>Normal</td>
+<td>Monkie Kid</td>
+<td>1949.0</td>
+<td>169.99</td>
+<td>Season 2</td>
+</tr>
+<tr>
+<th>80106-1</th>
+<td>Story of Nian</td>
+<td>Normal</td>
+<td>Seasonal</td>
+<td>1067.0</td>
+<td>79.99</td>
+<td>Chinese Traditional Festivals</td>
+</tr>
+<tr>
+<th>80107-1</th>
+<td>Spring Lantern Festival</td>
+<td>Normal</td>
+<td>Seasonal</td>
+<td>1793.0</td>
+<td>119.99</td>
+<td>Chinese Traditional Festivals</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<br>
+
+
+
+```python
+full_df.describe()
+```
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>Pieces</th>
+<th>RRP</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>count</th>
+<td>8502.000000</td>
+<td>8502.000000</td>
+</tr>
+<tr>
+<th>mean</th>
+<td>258.739591</td>
+<td>31.230506</td>
+</tr>
+<tr>
+<th>std</th>
+<td>481.627846</td>
+<td>44.993559</td>
+</tr>
+<tr>
+<th>min</th>
+<td>0.000000</td>
+<td>0.000000</td>
+</tr>
+<tr>
+<th>25%</th>
+<td>32.000000</td>
+<td>7.000000</td>
+</tr>
+<tr>
+<th>50%</th>
+<td>98.000000</td>
+<td>17.000000</td>
+</tr>
+<tr>
+<th>75%</th>
+<td>300.000000</td>
+<td>39.990000</td>
+</tr>
+<tr>
+<th>max</th>
+<td>11695.000000</td>
+<td>799.990000</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<br>
+
+
+
+```python
+CPI_URL = 'https://austinrochford.com/resources/lego/CPIAUCNS202100401.csv'
+```
+
+
+```python
+years = pd.date_range('1979-01-01', '2021-01-01', freq='Y') \
+        + datetime.timedelta(days=1)
+cpi_df = (pd.read_csv(CPI_URL, index_col="DATE", parse_dates=["DATE"])
+        .loc[years])
+cpi_df["to2021"] = cpi_df.loc["2021-01-01"] / cpi_df
+```
+
+We now add a column `RRP2021`, which is `RRP` adjusted to 2021 dollars.
+
+
+```python
+full_df["RRP2021"] = (pd.merge(full_df, cpi_df,
+                           left_on=["Year released"],
+                           right_index=True)
+                    .apply(lambda df: df["RRP"] * df["to2021"],
+                           axis=1))
+```
+
+Based on the exploratory data analysis in the first post in this series, we filter `full_df` down to approximately 6,300 sets to be included in our analysis.
+
+
+```python
+FILTERS = [
+full_df["Set type"] == "Normal",
+full_df["Pieces"] > 10,
+full_df["Theme"] != "Duplo",
+full_df["Theme"] != "Service Packs",
+full_df["Theme"] != "Bulk Bricks",
+full_df["RRP"] > 0
+]
+```
+
+
+```python
+df = full_df[reduce(np.logical_and, FILTERS)].copy()
+```
+
+
+```python
+df.head()
+```
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th></th>
+<th>Name</th>
+<th>Set type</th>
+<th>Theme</th>
+<th>Pieces</th>
+<th>RRP</th>
+<th>Subtheme</th>
+<th>RRP2021</th>
+</tr>
+<tr>
+<th>Year released</th>
+<th>Set number</th>
+<th></th>
+<th></th>
+<th></th>
+<th></th>
+<th></th>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th rowspan="5" valign="top">1980-01-01</th>
+<th>1041-2</th>
+<td>Educational Duplo Building Set</td>
+<td>Normal</td>
+<td>Dacta</td>
+<td>68.0</td>
+<td>36.50</td>
+<td>NaN</td>
+<td>122.721632</td>
+</tr>
+<tr>
+<th>1075-1</th>
+<td>LEGO People Supplementary Set</td>
+<td>Normal</td>
+<td>Dacta</td>
+<td>304.0</td>
+<td>14.50</td>
+<td>NaN</td>
+<td>48.752429</td>
+</tr>
+<tr>
+<th>5233-1</th>
+<td>Bedroom</td>
+<td>Normal</td>
+<td>Homemaker</td>
+<td>26.0</td>
+<td>4.50</td>
+<td>NaN</td>
+<td>15.130064</td>
+</tr>
+<tr>
+<th>6305-1</th>
+<td>Trees and Flowers</td>
+<td>Normal</td>
+<td>Town</td>
+<td>12.0</td>
+<td>3.75</td>
+<td>Accessories</td>
+<td>12.608387</td>
+</tr>
+<tr>
+<th>6306-1</th>
+<td>Road Signs</td>
+<td>Normal</td>
+<td>Town</td>
+<td>12.0</td>
+<td>2.50</td>
+<td>Accessories</td>
+<td>8.405591</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center><br>
+
+
+
+
+```python
+df.describe()
+```
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>Pieces</th>
+<th>RRP</th>
+<th>RRP2021</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>count</th>
+<td>6312.000000</td>
+<td>6312.000000</td>
+<td>6312.000000</td>
+</tr>
+<tr>
+<th>mean</th>
+<td>337.177440</td>
+<td>37.038246</td>
+<td>45.795998</td>
+</tr>
+<tr>
+<th>std</th>
+<td>535.619271</td>
+<td>49.657704</td>
+<td>58.952563</td>
+</tr>
+<tr>
+<th>min</th>
+<td>11.000000</td>
+<td>0.600000</td>
+<td>0.971220</td>
+</tr>
+<tr>
+<th>25%</th>
+<td>68.000000</td>
+<td>9.990000</td>
+<td>11.866173</td>
+</tr>
+<tr>
+<th>50%</th>
+<td>177.000000</td>
+<td>19.990000</td>
+<td>26.712319</td>
+</tr>
+<tr>
+<th>75%</th>
+<td>400.000000</td>
+<td>49.500000</td>
+<td>55.952471</td>
+</tr>
+<tr>
+<th>max</th>
+<td>11695.000000</td>
+<td>799.990000</td>
+<td>897.373477</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center><br>
+
+
+
+## Exploratory Data Analysis
+
+The first post in this series does quite a lot of exploratory data analysis (EDA) on this data which we will not repeat here.  For this post our EDA will focus on subtheme.
+
+We see that there are a bit less than 500 subthemes and that just under a quarter of sets have no subtheme associated with them on Brickset.
+
+
+```python
+df["Subtheme"].describe()
+```
+
+
+
+
+```
+count       4896
+unique       482
+top       3 in 1
+freq         189
+Name: Subtheme, dtype: object
+```
+
+
+
+
+```python
+df["Subtheme"].isnull().mean()
+```
+
+
+
+
+```
+0.22433460076045628
+```
+
+
+
+We see that there are many [Technic](https://www.lego.com/en-us/themes/technic) sets with no subtheme, and a few other themes also stand out for having many sets with no subtheme.
+
+
+```python
+ax = (df[df["Subtheme"].isnull()]
+        ["Theme"]
+        .value_counts()
+        .plot.barh(figsize=(8, 16)))
+
+ax.set_xscale('log');
+ax.set_xlabel("Number of sets with no subtheme");
+
+ax.invert_yaxis();
+ax.set_ylabel("Theme");
+```
+
+
+<center>![png](/resources/ucs_gunship_files/ucs_gunship_28_0.png)</center>
+
+
+When we introduce subtheme-based random effects we will treat these sets with null subtheme values carefully.
+
+Now we check whether or not each subtheme is only ever paired with one theme.
+
+
+```python
+sub_n_themes = (df.groupby("Subtheme")
+                  ["Theme"]
+                  .nunique())
+```
+
+
+```python
+ax = (sub_n_themes.value_counts()
+                  .plot.bar(rot=0))
+
+ax.set_xlabel(("Number of themes associated\n"
+               "with the subtheme"));
+
+ax.set_yscale('log');
+ax.set_ylabel("Number of subthemes");
+```
+
+
+<center>![png](/resources/ucs_gunship_files/ucs_gunship_31_0.png)</center>
+
+
+
+```python
+(sub_n_themes == 1).mean()
+```
+
+
+
+
+```
+0.9190871369294605
+```
+
+
+
+This plot and calculation show that the vast majority (about 92%) of subthemes are associated with only one theme.  We now examine the subthemes that are associated with more than one theme.
+
+
+```python
+ax = (sub_n_themes[sub_n_themes > 1]
+                  .sort_values()
+                  .plot.barh(figsize=(8, 9)))
+
+ax.set_xlabel(("Number of themes associated\n"
+               "with the subtheme"));
+```
+
+
+<center>![png](/resources/ucs_gunship_files/ucs_gunship_34_0.png)</center>
+
+
+The subthemes associated with the most themes make sense, many themes will have "Miscellaneous," "Promotional," "Seasonal," and "Accessories" sets.  Of the remaining such subthemes, I personally am curious about the themes that the "Star Wars" subtheme is associated with.
+
+
+```python
+STAR_WARS = "Star Wars"
+```
+
+
+```python
+ax = (df[df["Subtheme"] == STAR_WARS]
+        ["Theme"]
+        .value_counts()
+        .plot.barh())
+
+ax.set_xlabel(("Number of sets with\n"
+               "\"Star Wars\" subtheme"))
+
+ax.invert_yaxis();
+ax.set_ylabel("Theme");
+```
+
+
+<center>![png](/resources/ucs_gunship_files/ucs_gunship_37_0.png)</center>
+
+
+These themes make sense, there are "BrickHeadz" of many sorts (in addition to Star Wars, Disney, Harry Potter, and Pets come to mind immediately) and the same reasoning applies to "Brick Sketches" and "Mindstorms."
+
+In order to truly remain faithful to the source data, we will treat theme and subtheme as if they are not nested, even though in reality they are.
+
+## Modeling
+
+### Time-varying intercepts, theme-based random effects and slopes
+
+We begin by rebuilding the final model from the previous post, which models the relationship between log RRP in 2021 dollars and log piece count using time-varying intercepts and time-constant slopes with theme-based random effects.  For full details of this model please consult the previous post.
+
+First we build the feature vector $x$ (standardized log price) and the target vector $y$ (log RRP in 2021 dollars).
+
+
+```python
+pieces = df["Pieces"].values
+log_pieces = np.log(df["Pieces"].values)
+
+rrp2021 = df["RRP2021"].values
+log_rrp2021 = np.log(rrp2021)
+```
+
+
+```python
+scaler = StandardScaler().fit(log_pieces[:, np.newaxis])
+
+def scale_log_pieces(log_pieces, scaler=scaler):
+    return scaler.transform(log_pieces[:, np.newaxis])[:, 0]
+
+std_log_pieces = scale_log_pieces(log_pieces)
+std_log_pieces_ = shared(std_log_pieces)
+```
+
+We also encode the themes as integer indices and calculate the (standardize) mean log piece count per theme in order to make an adjustment to satisfy the Gauss-Markov criteria.
+
+
+```python
+theme_id, theme_map = df["Theme"].factorize(sort=True)
+n_theme = theme_map.size
+
+theme_id_ = shared(theme_id)
+```
+
+
+```python
+theme_mean_std_log_pieces = (pd.Series(std_log_pieces, index=df.index)
+                               .groupby(df["Theme"])
+                               .mean())
+```
+
+Finally we encode the year (in years since 1960) that the set was released for the time-varying component of the intercept.
+
+
+```python
+year = df.index.get_level_values("Year released").year.values
+t = year - year.min()
+n_year = int(t.max() + 1)
+
+t_ = shared(t)
+```
+
+We now define the final model of the previous post in PyMC3.
+
+
+```python
+def hierarchical_normal(name, shape, μ=None):
+    if μ is None:
+        μ = pm.Normal(f"μ_{name}", 0., 2.5)
+
+    Δ = pm.Normal(f"Δ_{name}", 0., 1., shape=shape)
+    σ = pm.HalfNormal(f"σ_{name}", 2.5)
+    
+    return pm.Deterministic(name, μ + Δ * σ)
+
+def hierarchical_normal_with_mean(name, x_mean, shape,
+                                  μ=None, mean_name="γ"):
+    mean_coef = pm.Normal(f"{mean_name}_{name}", 0., 2.5)
+        
+    return pm.Deterministic(
+        name,
+        hierarchical_normal(f"_{name}", shape, μ=μ) \
+            + mean_coef * x_mean
+    )
+```
+
+
+```python
+def gaussian_random_walk(name, shape, innov_scale=1.):
+    Δ = pm.Normal(f"Δ_{name}", 0., innov_scale,  shape=shape)
+
+    return pm.Deterministic(name, Δ.cumsum())
+```
+
+
+```python
+with pm.Model() as model:
+    β0_0 = pm.Normal("β0_0", 0., 2.5)
+    
+    β0_t = gaussian_random_walk("β0_t", n_year, innov_scale=0.1)
+    
+    β0_theme = hierarchical_normal_with_mean(
+        "β0_theme",
+        at.constant(theme_mean_std_log_pieces),
+        n_theme, μ=0.
+    )
+    β0_i = β0_0 + β0_t[t_] + β0_theme[theme_id_]
+
+    
+    β_pieces_0 = pm.Normal("β_pieces_0", 0., 2.5)
+    
+    β_pieces_theme = hierarchical_normal_with_mean(
+        "β_pieces_theme",
+        at.constant(theme_mean_std_log_pieces),
+        n_theme, μ=0.
+    )
+    
+    β_pieces = β_pieces_0 + β_pieces_theme
+    
+    σ = pm.HalfNormal("σ", 5.)
+    μ = β0_i + β_pieces_theme[theme_id_] * std_log_pieces_ - 0.5 * σ**2
+    
+    obs = pm.Normal("obs", μ, σ, observed=log_rrp2021)
+```
+
+We are finally ready to sample from the posterior distribution of this model given the Brickset data.
+
+
+```python
+CHAINS = 3
+SEED = 123456789
+
+SAMPLE_KWARGS = {
+    'cores': CHAINS,
+    'random_seed': [SEED + i for i in range(CHAINS)],
+    'return_inferencedata': True
+}
+```
+
+
+```python
+with model:
+    trace = pm.sample(**SAMPLE_KWARGS)
+```
+
+    Auto-assigning NUTS sampler...
+    Initializing NUTS using jitter+adapt_diag...
+    Multiprocess sampling (3 chains in 3 jobs)
+    NUTS: [β0_0, Δ_β0_t, γ_β0_theme, Δ__β0_theme, σ__β0_theme, β_pieces_0, γ_β_pieces_theme, Δ__β_pieces_theme, σ__β_pieces_theme, σ]
+
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='6000' class='' max='6000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [6000/6000 09:51<00:00 Sampling 3 chains, 0 divergences]
+</div>
+
+
+
+    Sampling 3 chains for 1_000 tune and 1_000 draw iterations (3_000 + 3_000 draws total) took 592 seconds.
+    The estimated number of effective samples is smaller than 200 for some parameters.
+
+
+The standard sampling diagnostics show no cause for concern.
+
+
+```python
+def plot_diagnostics(trace, axes=None, min_mult=0.995, max_mult=1.005):
+    if axes is None:
+        fig, axes = plt.subplots(ncols=2, sharex=False, sharey=False,
+                                 figsize=(16, 6))
+        
+    az.plot_energy(trace, ax=axes[0])
+    
+    
+    rhat = az.rhat(trace).max()
+    axes[1].barh(np.arange(len(rhat.variables)), rhat.to_array(),
+                 tick_label=list(rhat.variables.keys()))
+    axes[1].axvline(1, c='k', ls='--')
+
+    axes[1].set_xlim(
+        min_mult * min(rhat.min().to_array().min(), 1),
+        max_mult * max(rhat.max().to_array().max(), 1)
+    )
+    axes[1].set_xlabel(r"$\hat{R}$")
+
+    axes[1].set_ylabel("Variable")
+    
+    return fig, axes
+```
+
+
+```python
+plot_diagnostics(trace);
+```
+
+
+<center>![png](/resources/ucs_gunship_files/ucs_gunship_56_0.png)</center>
+
+
+ We now sample from the posterior predictive distribution of the model and visualize the resulting residuals.
+
+
+```python
+with model:
+    pp_data = pm.sample_posterior_predictive(trace)
+
+df["pred"] = pp_data["obs"].mean(axis=0)
+df["resid"] = log_rrp2021 - df["pred"]
+```
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='3000' class='' max='3000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [3000/3000 00:01<00:00]
+</div>
+
+
+
+
+```python
+ax = sns.scatterplot(x="Pieces", y="resid",
+                     data=df.reset_index(),
+                     color='C0', alpha=0.1);
+(df.groupby(df["Pieces"].round(-2))
+   ["resid"]
+   .mean()
+   .plot(c='k', label="Bucketed average",
+         ax=ax));
+
+ax.set_xscale('log');
+
+ax.set_ylim(-2, 2);
+ax.set_ylabel("Log RRP residual (2021 $)");
+
+ax.legend(loc='upper left');
+```
+
+
+<center>![png](/resources/ucs_gunship_files/ucs_gunship_59_0.png)</center>
+
+
+
+```python
+ax = (df.groupby(level="Year released")
+        ["resid"]
+        .mean()
+        .plot(c='k', label="Year average"));
+
+strip_ax = ax.twiny()
+sns.stripplot(x="Year released", y="resid",
+              data=df.reset_index(),
+              jitter=1.5,
+              color='C0', alpha=0.1,
+              ax=strip_ax);
+
+strip_ax.set_axis_off();
+
+ax.set_ylim(-2, 2);
+ax.set_ylabel("Log RRP residual (2021 $)");
+
+ax.legend(loc='upper left');
+```
+
+
+<center>![png](/resources/ucs_gunship_files/ucs_gunship_60_0.png)</center>
+
+
+The residuals are reasonably well-centered around zero when grouped by piece and year as expected from the previous post.
+
+### Adding subtheme-based random effects and slopes
+
+We now encode subthemes as integer identifiers.
+
+
+```python
+sub_id, sub_map = df["Subtheme"].factorize(sort=True)
+n_sub = sub_map.size
+
+sub_id_ = shared(sub_id)
+```
+
+Note that [`factorize`](https://pandas.pydata.org/docs/reference/api/pandas.factorize.html) encodes null values as `-1` by default, so we see that the number of such entries in `sub_id` matches the number of sets with null subtheme.
+
+
+```python
+(sub_id == -1).sum()
+```
+
+
+
+
+```
+1416
+```
+
+
+
+
+```python
+(df["Subtheme"]
+   .isnull()
+   .sum())
+```
+
+
+
+
+```
+1416
+```
+
+
+
+We build a mask indicating which subthemes are null.
+
+
+```python
+sub_isnull = sub_id == -1
+sub_isnull_ = shared(sub_isnull)
+```
+
+We also calculate the average (standardized) log number of pieces for each set in a subtheme.
+
+
+```python
+sub_mean_std_log_pieces = (pd.Series(std_log_pieces, index=df.index)
+                             .groupby(df["Subtheme"])
+                             .mean())
+```
+
+Recall from the previous post that $j(i)$ represents the index of the theme of the $i$-th set.  In similar fashion, let $k(i)$ denote the index of the subtheme of the $i$-th set.
+
+Our model with additional random effects and slopes for subthemes is as follows.
+
+The expected value of the slope is $\beta_0^0 \sim N(0, 2.5^2)$.
+
+
+```python
+with pm.Model() as sub_model:
+    β0_0 = pm.Normal("β0_0", 0., 2.5)
+```
+
+The time-varying component of the intercept is
+
+$$\beta_{0, t} \sim \text{GaussianRandomWalk}\left(0, (0.1)^2\right).$$
+
+
+```python
+with sub_model:
+    β0_t = gaussian_random_walk("β0_t", n_year, innov_scale=0.1)
+```
+
+$$
+\begin{align*}
+    \gamma_0
+        & \sim N(0, 2.5^2) \\
+    \sigma_0^{\text{theme}}
+        & \sim \textrm{HalfNormal}(2.5^2) \\
+    \beta_{0, j}^{\text{theme}}
+        & \sim N\left(\gamma_0 \cdot \bar{\tilde{x}}_j, \left(\sigma_0^{\text{theme}}\right)^2\right).
+\end{align*}
+$$
+
+Recall that here $\tilde{x}_i$ is the standardized log piece count of the $i$-th set and $\bar{\tilde{x}}_j$ is the average standardized log piece count of all sets in the $j$-th theme.
+
+
+```python
+with sub_model:
+    β0_theme = hierarchical_normal_with_mean(
+        "β0_theme",
+        at.constant(theme_mean_std_log_pieces),
+        n_theme, μ=0.
+    )
+```
+
+We now include the sub-theme based random intercepts.  All sets with null subtheme are given the same subtheme effect, $\beta_{0, -1}^{\text{sub}}$.  We use
+
+$$
+\begin{align*}
+    \beta_{0, -1}^{\text{sub}}, \lambda_0^{\text{pieces}}
+        & \sim N(0, 2.5^2) \\
+    \sigma_0^{\text{sub}}
+        & \sim \text{HalfNormal}(2.5^2) \\
+     \beta_{0, k}^{\text{sub}}
+        & \sim N\left(\lambda_0^{\text{pieces}} \cdot \check{\tilde{x}}_k, \left(\sigma_0^{\text{sub}}\right)^2\right).
+\end{align*}
+$$
+
+Here $\check{\tilde{x}}_k$ is the average standardized log piece count of all sets in the $k$-th subtheme.
+
+
+```python
+with sub_model:
+    β0_sub_null = pm.Normal("β0_sub_null", 0., 2.5)
+    β0_sub_nn = hierarchical_normal_with_mean(
+        "β0_sub_nn",
+        at.constant(sub_mean_std_log_pieces),
+        n_sub, μ=0., mean_name="λ"
+    )
+    β0_sub_i = at.switch(
+        sub_isnull_,
+        β0_sub_null,
+        β0_sub_nn[at.clip(sub_id_, 0, n_sub)]
+    )
+```
+
+Assembling the intercept terms, we get
+
+$$\beta_{0, i} = \beta_{0, 0} + \beta_{0, t(i)} + \beta_{0, j(i)}^{\text{theme}} + \beta_{0, k(i)}^{\text{sub}}.$$
+
+
+```python
+with sub_model:
+    β0_i = β0_0 + β0_t[t_] + β0_theme[theme_id_] + β0_sub_i
+```
+
+The varying slopes, $\beta_{\text{pieces}, i}$, are defined similarly, just without a time-varying component.
+
+
+```python
+with sub_model:
+    β_pieces_0 = pm.Normal("β_pieces_0", 0., 2.5)
+    
+    β_pieces_theme = hierarchical_normal_with_mean(
+        "β_pieces_theme",
+        at.constant(theme_mean_std_log_pieces),
+        n_theme, μ=0.
+    )
+    
+    β_pieces_sub_null = pm.Normal("β_pieces_sub_null", 0., 2.5)
+    β_pieces_sub_nn = hierarchical_normal_with_mean(
+        "β_pieces_sub_nn",
+        at.constant(sub_mean_std_log_pieces),
+        n_sub, μ=0., mean_name="λ"
+    )
+    β_pieces_sub_i = at.switch(
+        sub_isnull_,
+        β_pieces_sub_null,
+        β_pieces_sub_nn[at.clip(sub_id_, 0, n_sub)]
+    )
+
+    β_pieces_i = β_pieces_0 + β_pieces_theme[theme_id_] + β_pieces_sub_i
+```
+
+Finally, we specify the likelihood of this model and sample from its posterior distribution.
+
+
+```python
+with sub_model:
+    σ = pm.HalfNormal("σ", 5.)
+    μ = β0_i + β_pieces_i * std_log_pieces_ - 0.5 * σ**2
+    
+    obs = pm.Normal("obs", μ, σ, observed=log_rrp2021)
+```
+
+
+```python
+with sub_model:
+    sub_trace = pm.sample(**SAMPLE_KWARGS)
+```
+
+    Auto-assigning NUTS sampler...
+    Initializing NUTS using jitter+adapt_diag...
+    Multiprocess sampling (3 chains in 3 jobs)
+    NUTS: [β0_0, Δ_β0_t, γ_β0_theme, Δ__β0_theme, σ__β0_theme, β0_sub_null, λ_β0_sub_nn, Δ__β0_sub_nn, σ__β0_sub_nn, β_pieces_0, γ_β_pieces_theme, Δ__β_pieces_theme, σ__β_pieces_theme, β_pieces_sub_null, λ_β_pieces_sub_nn, Δ__β_pieces_sub_nn, σ__β_pieces_sub_nn, σ]
+
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='6000' class='' max='6000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [6000/6000 17:10<00:00 Sampling 3 chains, 0 divergences]
+</div>
+
+
+
+    Sampling 3 chains for 1_000 tune and 1_000 draw iterations (3_000 + 3_000 draws total) took 1031 seconds.
+    The number of effective samples is smaller than 25% for some parameters.
+
+
+The sampling diagnostics show no cause for concern.
+
+
+```python
+plot_diagnostics(sub_trace);
+```
+
+
+<center>![png](/resources/ucs_gunship_files/ucs_gunship_87_0.png)</center>
+
+
+We now sample from the posterior predictive distribution of the model and compare the resulting residuals to those of the baseline model.
+
+
+```python
+with sub_model:
+    pp_sub_data = pm.sample_posterior_predictive(sub_trace)
+
+df["sub_pred"] = pp_sub_data["obs"].mean(axis=0)
+df["sub_resid"] = log_rrp2021 - df["sub_pred"]
+```
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='3000' class='' max='3000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [3000/3000 00:02<00:00]
+</div>
+
+
+
+
+```python
+fig, (ax, sub_ax) = plt.subplots(
+    ncols=2, sharex=True, sharey=True,
+    figsize=(2 * FIGSIZE[0], FIGSIZE[1])
+)
+
+sns.scatterplot(x="Pieces", y="resid",
+                data=df.reset_index(),
+                color='C0', alpha=0.1,
+                ax=ax);
+(df.groupby(df["Pieces"].round(-2))
+   ["resid"]
+   .mean()
+   .plot(c='k', label="Bucketed average",
+         ax=ax));
+
+ax.set_xscale('log');
+
+ax.set_ylim(-2, 2);
+ax.set_ylabel("Log RRP residual (2021 $)");
+
+ax.legend(loc='upper left');
+ax.set_title("Baseline model");
+
+sns.scatterplot(x="Pieces", y="sub_resid",
+                data=df.reset_index(),
+                color='C0', alpha=0.1,
+                ax=sub_ax);
+(df.groupby(df["Pieces"].round(-2))
+   ["sub_resid"]
+   .mean()
+   .plot(c='k', ax=sub_ax));
+
+sub_ax.set_title("Subtheme model");
+
+fig.tight_layout();
+```
+
+
+<center>![png](/resources/ucs_gunship_files/ucs_gunship_90_0.png)</center>
+
+
+
+```python
+fig, (ax, sub_ax) = plt.subplots(
+    ncols=2, sharex=True, sharey=True,
+    figsize=(2 * FIGSIZE[0], FIGSIZE[1])
+)
+
+(df.groupby(level="Year released")
+   ["resid"]
+   .mean()
+   .plot(c='k', label="Year average",
+         ax=ax));
+
+strip_ax = ax.twiny()
+sns.stripplot(x="Year released", y="resid",
+              data=df.reset_index(),
+              jitter=1.5,
+              color='C0', alpha=0.1,
+              ax=strip_ax);
+
+strip_ax.set_axis_off();
+
+ax.set_ylim(-2, 2);
+ax.set_ylabel("Log RRP residual (2021 $)");
+
+ax.legend(loc='upper left');
+ax.set_title("Baseline model");
+
+(df.groupby(level="Year released")
+   ["sub_resid"]
+   .mean()
+   .plot(c='k', label="Year average",
+         ax=sub_ax));
+
+sub_strip_ax = sub_ax.twiny()
+sns.stripplot(x="Year released", y="sub_resid",
+              data=df.reset_index(),
+              jitter=1.5,
+              color='C0', alpha=0.1,
+              ax=sub_strip_ax);
+
+sub_strip_ax.set_axis_off();
+
+sub_ax.set_title("Subtheme model");
+
+fig.tight_layout();
+```
+
+
+<center>![png](/resources/ucs_gunship_files/ucs_gunship_91_0.png)</center>
+
+
+The residuals look quite similar, with perhaps slightly less variation for the subtheme model.  Since the residuals are so visually similar, we turn to Pareto-smoothed importance sampling leave-one-out cross validation^[Vehtari, A., Gelman, A., & Gabry, J. (2017). [Practical Bayesian model evaluation using leave-one-out cross-validation and WAIC.](https://arxiv.org/abs/1507.04544) _Statistics and computing_, 27(5), 1413-1432.] (PSIS-LOO) to compare the models.
+
+
+```python
+traces = {
+    "Baseline": trace,
+    "Subtheme": sub_trace
+}
+```
+
+
+```python
+%%time
+comp_df = az.compare(traces)
+```
+
+    CPU times: user 20.7 s, sys: 397 ms, total: 21.1 s
+    Wall time: 21.1 s
+
+
+
+```python
+comp_df.loc[:, :"weight"]
+```
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>rank</th>
+<th>loo</th>
+<th>p_loo</th>
+<th>d_loo</th>
+<th>weight</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>Subtheme</th>
+<td>0</td>
+<td>-1142.927746</td>
+<td>639.913733</td>
+<td>0.000000</td>
+<td>0.911548</td>
+</tr>
+<tr>
+<th>Baseline</th>
+<td>1</td>
+<td>-2062.767732</td>
+<td>251.538394</td>
+<td>919.839986</td>
+<td>0.088452</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center><br>
+
+
+
+```python
+az.plot_compare(comp_df, plot_ic_diff=False);
+```
+
+
+<center>![png](/resources/ucs_gunship_files/ucs_gunship_96_0.png)</center>
+
+
+We see that the subtheme model has approximately 2.5 times as many effective parameters as the baseline model and produces a significantly higher PSIS-LOO score.
+
+### Model interpretation
+
+We now interpret the posterior distributions of various parameters and the posterior predictions of these two models.
+
+
+```python
+LARGE_LABEL_FS = 18
+```
+
+
+```python
+grid = az.plot_posterior(
+    trace,
+    var_names=[
+        "σ__β0_theme",
+        "σ__β_pieces_theme"
+    ],
+    hdi_prob='hide',
+    color='C0', label="Baseline model"
+)
+az.plot_posterior(
+    sub_trace,
+    var_names=[
+        "σ__β0_theme",
+        "σ__β_pieces_theme"
+    ],
+    hdi_prob='hide',
+    color='C1', label="Subtheme model",
+    ax=grid
+);
+
+grid[0].set_xlabel(r"$\sigma_{\beta_0^{\mathrm{theme}}}$",
+                   fontsize=LARGE_LABEL_FS);
+grid[0].set_title(None);
+grid[0].get_legend().remove()
+
+grid[1].set_xlabel(r"$\sigma_{\beta_{\mathrm{pieces}}^{\mathrm{theme}}}$",
+                   fontsize=LARGE_LABEL_FS);
+grid[1].set_title(None);
+```
+
+
+<center>![png](/resources/ucs_gunship_files/ucs_gunship_100_0.png)</center>
+
+
+We see that after adding subtheme-based varying intercepts and slopes that the scale of the varying intercepts remains roughly the same, but the scale of the varying slopes is greatly reduced.
+
+
+```python
+grid = az.plot_posterior(sub_trace,
+                         var_names=[
+                            "σ__β0_sub_nn",
+                            "σ__β_pieces_sub_nn"
+                         ])
+
+grid[0].set_xlabel(r"$\sigma_{\beta_0^{\mathrm{sub}}}$",
+                   fontsize=18);
+grid[0].set_title(None);
+
+grid[1].set_xlabel(r"$\sigma_{\beta_{\mathrm{pieces}}^{\mathrm{sub}}}$",
+                   fontsize=18);
+grid[1].set_title(None);
+```
+
+
+<center>![png](/resources/ucs_gunship_files/ucs_gunship_102_0.png)</center>
+
+
+Interestingly, the scale of the subtheme-based variation is significantly smaller than that of the theme-based variation in the baseline model.
+
+
+```python
+β0_theme_hat = trace["posterior"]["β0_theme"].mean(dim=("chain", "draw"))
+β_pieces_theme_hat = trace["posterior"]["β_pieces_theme"].mean(dim=("chain", "draw"))
+
+β0_theme_hat_sub = sub_trace["posterior"]["β0_theme"].mean(dim=("chain", "draw"))
+β_pieces_theme_hat_sub = sub_trace["posterior"]["β_pieces_theme"].mean(dim=("chain", "draw"))
+```
+
+
+```python
+fig, (int_ax, slope_ax) = plt.subplots(
+    ncols=2,
+    figsize=(2 * FIGSIZE[1], FIGSIZE[1])
+)
+
+int_ax.set_aspect('equal');
+slope_ax.set_aspect('equal');
+
+sns.scatterplot(
+    x=β0_theme_hat, y=β0_theme_hat_sub,
+    alpha=0.5, ax=int_ax
+);
+
+int_ax.axline((0, 0), slope=1, c='k', ls='--');
+
+int_ax.set_xlabel("Baseline model");
+int_ax.set_ylabel("Subtheme model");
+int_ax.set_title(r"$\beta_0^{\mathrm{theme}}$");
+
+sns.scatterplot(
+    x=β_pieces_theme_hat, y=β_pieces_theme_hat_sub,
+    alpha=0.5, ax=slope_ax
+);
+
+slope_ax.axline((0, 0), slope=1, c='k', ls='--');
+
+slope_ax.set_xlabel("Baseline model");
+slope_ax.set_ylabel("Subtheme model");
+slope_ax.set_title(r"$\beta_{\mathrm{pieces}}^{\mathrm{theme}}$");
+
+fig.tight_layout();
+```
+
+
+<center>![png](/resources/ucs_gunship_files/ucs_gunship_105_0.png)</center>
+
+
+These relationships are shown clearly when we scatter plot the posterior expected value of the theme-based varying slopes and intercepts against each other from each model.  We see that the theme-based varying intercepts are largely concentrated around the line $y = x$ while the theme-based varying slopes almost all have $y < x$.
+
+
+```python
+β0_sub_nn_hat = sub_trace["posterior"]["β0_sub_nn"].mean(dim=("chain", "draw"))
+β_pieces_sub_nn_hat = sub_trace["posterior"]["β_pieces_sub_nn"].mean(dim=("chain", "draw"))
+```
+
+
+```python
+ax = sns.scatterplot(
+    x=β0_sub_nn_hat, y=β_pieces_sub_nn_hat,
+    alpha=0.5
+)
+
+ax.set_xlabel(r"$\beta_0^{\mathrm{sub}}$");
+ax.set_ylabel(r"$\beta_{\mathrm{pieces}}^{\mathrm{sub}}$");
+```
+
+
+<center>![png](/resources/ucs_gunship_files/ucs_gunship_108_0.png)</center>
+
+
+There is a negative relationship subtheme-based varying intercepts and slopes.  As the subtheme-based intercept increased, the subtheme-based slope decreases.
+
+
+```python
+fig, (int_ax, slope_ax) = plt.subplots(
+    ncols=2,
+    figsize=(2 * FIGSIZE[1], FIGSIZE[1])
+)
+
+sns.scatterplot(
+    x=β0_theme_hat, y=β_pieces_theme_hat,
+    alpha=0.5, ax=int_ax
+);
+
+int_ax.set_xlabel(r"$\beta_0^{\mathrm{theme}}$");
+int_ax.set_ylabel(r"$\beta_{\mathrm{pieces}}^{\mathrm{theme}}$");
+int_ax.set_title("Baseline model");
+
+sns.scatterplot(
+    x=β0_theme_hat_sub, y=β_pieces_theme_hat_sub,
+    alpha=0.5, ax=slope_ax
+);
+
+slope_ax.set_xlabel(r"$\beta_0^{\mathrm{theme}}$");
+slope_ax.set_ylabel(r"$\beta_{\mathrm{pieces}}^{\mathrm{theme}}$");
+slope_ax.set_title("Subtheme model");
+
+fig.tight_layout();
+```
+
+
+<center>![png](/resources/ucs_gunship_files/ucs_gunship_110_0.png)</center>
+
+
+These negative relationships exist for the theme-based varying intercepts and slopes in both models as well, but are less pronounced.  This tighter relationship between subtheme-based varying intercepts and slopes is partially responsible for the smaller scale of the theme-based varying slopes in the subtheme model.
+
+We now turn to examining the effects of particular subthemes.  First we plot the subthemes with the most extreme intercept and slopes.
+
+
+```python
+N_EXTREME = 10
+```
+
+
+```python
+def get_extreme_ix(x, n_extreme=N_EXTREME):
+    argsorted = x.argsort()
+    
+    return np.concatenate((argsorted[:n_extreme // 2], argsorted[-(n_extreme // 2):]))
+```
+
+
+```python
+β0_sub_ext_ix = get_extreme_ix(β0_sub_nn_hat)
+
+ax, = az.plot_forest(sub_trace, var_names=["β0_sub_nn"],
+                     coords={
+                       "β0_sub_nn_dim_0": β0_sub_ext_ix
+                     },
+                     hdi_prob=0.95, combined=True)
+
+ax.set_xlabel(r"$\beta_0^{\mathrm{sub}}$");
+ax.set_yticklabels(sub_map[β0_sub_ext_ix][::-1]);
+ax.set_title(None);
+```
+
+
+<center>![png](/resources/ucs_gunship_files/ucs_gunship_114_0.png)</center>
+
+
+
+```python
+β_pieces_sub_ext_ix = get_extreme_ix(β_pieces_sub_nn_hat)
+
+ax, = az.plot_forest(sub_trace, var_names=["β_pieces_sub_nn"],
+                     coords={
+                       "β_pieces_sub_nn_dim_0": β_pieces_sub_ext_ix
+                     },
+                     hdi_prob=0.95, combined=True)
+
+ax.set_xlabel(r"$\beta_{\mathrm{pieces}}^{\mathrm{sub}}$");
+ax.set_yticklabels(sub_map[β_pieces_sub_ext_ix][::-1]);
+ax.set_title(None);
+```
+
+
+<center>![png](/resources/ucs_gunship_files/ucs_gunship_115_0.png)</center>
+
+
+That subthemes like "Extra Dots," "Bulk Set," and "Mini Building Set" have some of the smallest intercepts and "Outdoor RC" has the largest is intuitive.  Due to the negative correlation between subtheme intercepts and slopes, we then see that "Outdoor RC" is in the bottom in terms of slope.  It also makes sense that "Technic" has one of the highest slopes, as Technic sets tend to include specialized pieces more often than most subthemes.
+
+#### The Republic Gunship
+
+We now return to the original question in this post, whether the Ultimate Collector Series Republic Gunship is fairly priced.  To answer this question, first we examine the varying slopes and intercepts for Star Wars-themed and Ultimate Collector Series-subthemed sets for the models.
+
+
+```python
+star_wars_id = (theme_map == STAR_WARS).argmax()
+```
+
+
+```python
+grid = az.plot_posterior(
+    trace,
+    var_names=[
+        "β0_theme",
+        "β_pieces_theme"
+    ],
+    coords={
+        "β0_theme_dim_0": [star_wars_id],
+        "β_pieces_theme_dim_0": [star_wars_id]
+    },
+    hdi_prob='hide',
+    color='C0', label="Baseline model"
+)
+az.plot_posterior(
+    sub_trace,
+    var_names=[
+        "β0_theme",
+        "β_pieces_theme"
+    ],
+    coords={
+        "β0_theme_dim_0": [star_wars_id],
+        "β_pieces_theme_dim_0": [star_wars_id]
+    },
+    hdi_prob='hide',
+    color='C1', label="Subtheme model",
+    ax=grid
+);
+
+grid[0].set_xlabel(r"$\beta_0^{\mathrm{theme}}$",
+                   fontsize=LARGE_LABEL_FS);
+grid[0].set_title(None);
+grid[0].get_legend().remove()
+
+grid[1].set_xlabel(r"$\beta_{\mathrm{pieces}}^{\mathrm{theme}}$",
+                   fontsize=LARGE_LABEL_FS);
+grid[1].set_title(None);
+
+plt.gcf().suptitle("Star Wars");
+```
+
+
+<center>![png](/resources/ucs_gunship_files/ucs_gunship_119_0.png)</center>
+
+
+As with the general trend, we see that the posterior distributions for the intercept Star Wars-themed sets are similar for both models, but their slopes are quite different.
+
+
+```python
+UCS = "Ultimate Collector Series"
+ucs_id = (sub_map == UCS).argmax()
+```
+
+We see that the intercept for Ultimate Collector series sets is quite average and the slope for such sets is perhaps slightly positive, but not large.
+
+
+```python
+int_ax, slope_ax = az.plot_posterior(
+    sub_trace,
+    var_names=[
+        "β0_sub_nn",
+        "β_pieces_sub_nn"
+    ],
+    coords={
+        "β0_sub_nn_dim_0": [ucs_id],
+        "β_pieces_sub_nn_dim_0": [ucs_id]
+    },
+    ref_val=0.
+)
+
+int_ax.set_xlabel(r"$\beta_0^{\mathrm{sub}}$",
+                  fontsize=LARGE_LABEL_FS);
+int_ax.set_title(None);
+
+slope_ax.set_xlabel(r"$\beta_{\mathrm{pieces}}^{\mathrm{sub}}$",
+                    fontsize=LARGE_LABEL_FS);
+slope_ax.set_title(None);
+
+plt.gcf().suptitle("Ultimate Collector Series");
+```
+
+
+<center>![png](/resources/ucs_gunship_files/ucs_gunship_123_0.png)</center>
+
+
+We see that Ultimate Collector series sets are not really set apart by their subtheme intercept or slope, but rather the fact that they have many more pieces than most Star WSars sets (on average).
+
+
+```python
+ax = sns.kdeplot(df["Pieces"][df["Theme"] == STAR_WARS],
+                 clip=(0., np.inf),
+                 label="All Star Wars sets")
+sns.kdeplot(df["Pieces"][df["Subtheme"] == UCS],
+            clip=(0., np.inf),
+            label="Ultimate Collector Series sets",
+            ax=ax);
+sns.rugplot(df["Pieces"][df["Subtheme"] == UCS],
+            height=0.05, c='C1', ax=ax);
+
+ax.set_xlim(left=-100.);
+ax.set_yticklabels([]);
+ax.legend();
+```
+
+
+<center>![png](/resources/ucs_gunship_files/ucs_gunship_125_0.png)</center>
+
+
+Finally we examine the posterior predictive distribution of the price of the Ultimate Collector Series Republic Gunship.
+
+
+```python
+GUNSHIP_SET_NUM = "73509"
+GUNSHIP_PIECES = 3292
+
+GUNSHIP_YEAR = 2021
+gunship_t = 2021 - year.min()
+```
+
+
+```python
+std_log_pieces_.set_value(scale_log_pieces(np.log([GUNSHIP_PIECES])))
+theme_id_.set_value([star_wars_id])
+sub_isnull_.set_value([False])
+sub_id_.set_value([ucs_id])
+t_.set_value([gunship_t])
+```
+
+
+```python
+with model:
+    pp_gunship_data = pm.sample_posterior_predictive(trace)
+```
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='3000' class='' max='3000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [3000/3000 00:00<00:00]
+</div>
+
+
+
+
+```python
+with sub_model:
+    pp_gunship_sub_data = pm.sample_posterior_predictive(sub_trace)
+```
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='3000' class='' max='3000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [3000/3000 00:00<00:00]
+</div>
+
+
+
+
+```python
+GUNSHIP_RRP = 349.99
+```
+
+
+```python
+def format_posterior_artist(artist, formatter):
+    text = artist.get_text()
+    x, _ = artist.get_position()
+
+    if text.startswith(" ") or text.endswith(" "):
+        fmtd_text = formatter(x)
+        artist.set_text(
+            " " + fmtd_text if text.startswith(" ") else fmtd_text + " "
+        )
+    elif "=" in text:
+        before, _ = text.split("=")
+        artist.set_text("=".join((before, formatter(x))))
+    elif "<" in text:
+        below, ref_val_str, above = text.split("<")
+        artist.set_text("<".join((
+            below,
+            " " + formatter(float(ref_val_str)) + " ",
+            above
+        )))
+
+def format_posterior_text(formatter, ax=None):
+    if ax is None:
+        ax = plt.gca()
+    
+    artists = [artist for artist in ax.get_children() if isinstance(artist, plt.Text)]
+    
+    for artist in artists:
+        format_posterior_artist(artist, formatter),
+```
+
+
+```python
+fig, (ax, sub_ax) = plt.subplots(
+    ncols=2, sharex=True, sharey=True,
+    figsize=(2 * FIGSIZE[0], FIGSIZE[1]))
+
+az.plot_posterior(np.exp(pp_gunship_data["obs"]),
+                  ref_val=GUNSHIP_RRP, ax=ax);
+format_posterior_text(dollar_formatter, ax=ax)
+
+ax.set_xlabel(f"Posterior predicted RRP for {GUNSHIP_SET_NUM}\n(2021 $)");
+ax.set_title("Baseline model");
+
+az.plot_posterior(np.exp(pp_gunship_sub_data["obs"]),
+                  ref_val=GUNSHIP_RRP, ax=sub_ax);
+format_posterior_text(dollar_formatter, ax=sub_ax)
+
+sub_ax.set_xlabel(f"Posterior predicted RRP for {GUNSHIP_SET_NUM}\n(2021 $)");
+sub_ax.set_title("Subtheme model");
+
+fig.tight_layout();
+```
+
+
+<center>![png](/resources/ucs_gunship_files/ucs_gunship_133_0.png)</center>
+
+
+The plot on the left shows that the baseline model considers the Ultimate Collector Series Republic Gunship slightly overpriced, while the plot on the right shows that the subtheme model considers it slightly underpriced.  Since these deviations from the posterior expected value are small in either case, it is safe to say that both of these models consider the Ultimate Collector Series Republic Gunship to be priced in line with Lego's historic prices.  (I'll be ordering it come August 1.)
+
+This post is available as a Jupyter notebook [here](https://nbviewer.jupyter.org/gist/AustinRochford/f590045a086ee61ea94e7f2ca20d3991).
+
+
+```python
+%load_ext watermark
+%watermark -n -u -v -iv
+```
+
+    Last updated: Tue Jul 20 2021
+    
+    Python implementation: CPython
+    Python version       : 3.7.10
+    IPython version      : 7.24.1
+    
+    aesara    : 2.0.12
+    seaborn   : 0.11.1
+    numpy     : 1.19.5
+    pymc3     : 4.0
+    matplotlib: 3.4.2
+    arviz     : 0.11.2
+    pandas    : 1.2.4
+    
+

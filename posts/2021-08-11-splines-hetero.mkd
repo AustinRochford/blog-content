@@ -1,0 +1,1612 @@
+---
+title: Bayesian Splines with Heteroskedastic Noise in Python with PyMC3
+tags: Bayesian Statistics, Spines, Python, PyMC3
+---
+
+[Splines](https://en.wikipedia.org/wiki/Spline_(mathematics)) are a powerful tool when modeling nonlinear relationships.  This post shows how to include splines in a Bayesian model in Python using [`pymc3`](https://en.wikipedia.org/wiki/Spline_(mathematics)).  In addition, we will show how to use a second spline component to handle [heteroskedastic](https://en.wikipedia.org/wiki/Heteroscedasticity) data, that is, data where the noise scale is not constant.
+
+<center>
+<fig>
+<img src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/ee/Cardinal_cubic_B-spline2.svg/1280px-Cardinal_cubic_B-spline2.svg.png" width=600>
+<br>
+<caption>Image credit [Wikipedia](https://en.wikipedia.org/wiki/B-spline)</caption>
+</fig>
+</center>
+<br>
+
+To illustrate these concepts, we will use [Lidar](https://en.wikipedia.org/wiki/Lidar) data from Larry Wasserman's excellent book [_All of Nonparametric Statistics_](http://www.stat.cmu.edu/~larry/all-of-nonpar/).
+
+## Load the Data
+
+First we make the necessary Python imports and do some light housekeeping.
+
+
+```python
+%matplotlib inline
+```
+
+
+```python
+from warnings import filterwarnings
+```
+
+
+```python
+from aesara import shared, tensor as at
+import arviz as az
+import matplotlib as mpl
+from matplotlib import pyplot as plt
+import numpy as np
+import pandas as pd
+import pymc3 as pm
+import scipy as sp
+import seaborn as sns
+```
+
+    You are running the v4 development version of PyMC3 which currently still lacks key features. You probably want to use the stable v3 instead which you can either install via conda or find on the v3 GitHub branch: https://github.com/pymc-devs/pymc3/tree/v3
+
+
+
+```python
+filterwarnings('ignore', category=UserWarning, module='arviz')
+```
+
+
+```python
+mpl.rcParams['figure.figsize'] = (8, 6)
+
+sns.set(color_codes=True)
+```
+
+We are now ready to load the data.
+
+
+```python
+DATA_URL = 'http://www.stat.cmu.edu/~larry/all-of-nonpar/=data/lidar.dat'
+```
+
+
+```python
+df = pd.read_csv(DATA_URL, sep=' +', engine='python')
+```
+
+
+```python
+df.head()
+```
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>range</th>
+<th>logratio</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>0</th>
+<td>390</td>
+<td>-0.050356</td>
+</tr>
+<tr>
+<th>1</th>
+<td>391</td>
+<td>-0.060097</td>
+</tr>
+<tr>
+<th>2</th>
+<td>393</td>
+<td>-0.041901</td>
+</tr>
+<tr>
+<th>3</th>
+<td>394</td>
+<td>-0.050985</td>
+</tr>
+<tr>
+<th>4</th>
+<td>396</td>
+<td>-0.059913</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<br>
+
+
+
+
+```python
+df.describe()
+```
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>range</th>
+<th>logratio</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>count</th>
+<td>221.000000</td>
+<td>221.000000</td>
+</tr>
+<tr>
+<th>mean</th>
+<td>554.751131</td>
+<td>-0.291156</td>
+</tr>
+<tr>
+<th>std</th>
+<td>95.912396</td>
+<td>0.282475</td>
+</tr>
+<tr>
+<th>min</th>
+<td>390.000000</td>
+<td>-0.949554</td>
+</tr>
+<tr>
+<th>25%</th>
+<td>472.000000</td>
+<td>-0.542305</td>
+</tr>
+<tr>
+<th>50%</th>
+<td>555.000000</td>
+<td>-0.108043</td>
+</tr>
+<tr>
+<th>75%</th>
+<td>637.000000</td>
+<td>-0.054825</td>
+</tr>
+<tr>
+<th>max</th>
+<td>720.000000</td>
+<td>0.026907</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<br>
+
+
+We standardize both `range` and `logratio` to make it easier to specify priors once we begin building our spline models.
+
+
+```python
+std_df = (df - df.mean()) / df.std()
+```
+
+
+```python
+std_df.head()
+```
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>range</th>
+<th>logratio</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>0</th>
+<td>-1.717725</td>
+<td>0.852467</td>
+</tr>
+<tr>
+<th>1</th>
+<td>-1.707299</td>
+<td>0.817981</td>
+</tr>
+<tr>
+<th>2</th>
+<td>-1.686447</td>
+<td>0.882398</td>
+</tr>
+<tr>
+<th>3</th>
+<td>-1.676020</td>
+<td>0.850240</td>
+</tr>
+<tr>
+<th>4</th>
+<td>-1.655168</td>
+<td>0.818631</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<br>
+
+
+### Exploratory Data Analysis
+
+The task at hand is to model (standardized) `logratio` as a function of (standardized) `range`.
+
+
+```python
+fig, (std_ax, joint_ax) = plt.subplots(
+    nrows=2, sharex=True, sharey=False,
+    gridspec_kw={'height_ratios': [1, 4]}
+)
+
+sns.scatterplot(x="range", y="logratio", data=std_df,
+                alpha=0.5, ax=joint_ax);
+
+(std_df.groupby(std_df["range"].round(1))
+       ["logratio"]
+       .std()
+       .rolling(5)
+       .mean()
+       .plot(ax=std_ax));
+
+std_ax.set_ylabel("Standard\ndeviation\n(binned)");
+
+fig.tight_layout();
+```
+
+
+<center>![png](/resources/splines_hetero_files/splines_hetero_18_0.png)</center>
+
+
+The scatter plot shows that the relationship is definitely nonlinear, and there is no obvious (to me at least) transform of `logratio` that will make the relationship linear.  The top plot shows how the (binned, smoothed) standard deviation of `logratio` varies with `range`.  As is evident from both plots, as `range` increases, so does the scale of variation of `logratio`.
+
+## Introduction to Splines
+
+Regression splines are a type of of [generalized additive model](https://en.wikipedia.org/wiki/Generalized_additive_model) (GAM) that use linear combinations of (generally low-degree) polynomials to introduce nonlinear relationships between covariates and responses.
+
+To begin constructing our spline model, we must choose a number of knots (also known as anchors or control points) in the domain of our co variate.  In this post we will use twenty splines in the interval $[-1.75, 1.75]$, which comfortably contains the observed values of `range`.
+
+
+```python
+N_KNOT = 20
+
+knots = np.linspace(-1.75, 1.75, N_KNOT)
+```
+
+The following plot shows the location of the knots in the Lidar data.
+
+
+```python
+fig, (std_ax, joint_ax) = plt.subplots(
+    nrows=2, sharex=True, sharey=False,
+    gridspec_kw={'height_ratios': [1, 4]}
+)
+
+sns.scatterplot(x="range", y="logratio", data=std_df,
+                alpha=0.5, ax=joint_ax);
+sns.rugplot(knots, height=0.075,
+            c='k', label="Knots",
+            ax=joint_ax);
+
+(std_df.groupby(std_df["range"].round(1))
+       ["logratio"]
+       .std()
+       .rolling(5)
+       .mean()
+       .plot(ax=std_ax));
+sns.rugplot(knots, height=0.15,
+            c='k', label="Knots",
+            ax=std_ax);
+
+std_ax.set_ylabel("Standard\ndeviation\n(binned)");
+
+joint_ax.legend();
+fig.tight_layout();
+```
+
+
+<center>![png](/resources/splines_hetero_files/splines_hetero_23_0.png)</center>
+
+
+Let $x^*_i$, $i = 1, 2, \ldots, 20$ be the location of the $j$-th knot.  The spline model we will use is given by
+
+$$E(Y\ |\ X) = \sum_{j = 1}^{20} \beta_j \cdot B_{j, k; \mathbf{x}^*}(X)$$.
+
+(If one applies a link function to the conditional expectation of the left hand side, this becomes a _generalized_ additive model.)  For spline regression, $B_{j, k; \mathbf{x}^*}(\cdot)$ is a $k$-th-degree polynomial in $x$ and $x^*$.  There are many possible choices for these functions.  We will use `scipy`'s cubic [B-spline](https://en.wikipedia.org/wiki/B-spline) [implementation](https://docs.scipy.org/doc/scipy/reference/generated/scipy.interpolate.BSpline.html). For more information splines, consult Simon Wood's excellent book [_Generalized Additive Models_](https://www.taylorfrancis.com/books/mono/10.1201/9781315370279/generalized-additive-models-simon-wood).
+
+
+```python
+basis = sp.interpolate.BSpline(knots, np.eye(N_KNOT), 3)
+```
+
+We see that `basis` is a callable function function that will give the design matrix for spline regression at a given set of points.
+
+
+```python
+hasattr(basis, '__call__')
+```
+
+
+
+
+```
+True
+```
+
+
+
+We build this design matrix at the (standardized) value of `range`.
+
+
+```python
+dmat = shared(basis(std_df["range"]))
+```
+
+With `dmat` in hand, we are ready to build our model with `pymc3`.  We follow the model specified in [Milad Kharratzadeh's](http://www.miladkh.com/) excellent short paper [_Splines in Stan_](https://github.com/milkha/Splines_in_Stan/blob/master/splines_in_stan.pdf).
+
+The model for the conditional mean is given above,
+
+$$\mu\ |\ X = \sum_{j = 1}^{20} \beta_j \cdot B_{j, k; \mathbf{x}^*}(X).$$
+
+We put a Gaussian random walk prior (GRW) on these coefficients $\beta_j$, under the intuition that the coefficients for adjacent knots should be similar.  We parameterize our GRW as follows:
+
+$$
+\begin{align*}
+    \mu_{\beta}
+        & \sim N(0, 2.5^2) \\
+    \Delta_{\beta, j}
+        & \sim N(0, 1) \\
+    \sigma_{\beta}
+        & \sim \mathrm{Half}-N(2.5^2) \\
+    \beta_j
+        & = \mu_{\beta} + \sigma_{\beta} \cdot \sum_{i = 1}^j \Delta_{\beta, i}.
+\end{align*}
+$$
+
+
+```python
+# the scale necessary to make a halfnormal distribution
+# have unit variance
+HALFNORMAL_SCALE = 1. / np.sqrt(1. - 2. / np.pi)
+```
+
+
+```python
+coords = {"knot": np.arange(N_KNOT)}
+
+with pm.Model(coords=coords) as model:
+    μ_β = pm.Normal("μ_β", 0., 2.5)
+    Δ_β = pm.Normal("Δ_β", 0., 1., dims="knot")
+    σ_β = pm.HalfNormal("σ_β", 2.5 * HALFNORMAL_SCALE)
+    β = pm.Deterministic("β", μ_β + σ_β * Δ_β.cumsum(),
+                         dims="knot")
+    μ = at.dot(dmat, β)
+```
+
+Our observational model here is normal, with unknown variance $\sigma \sim \mathrm{Half-}N(2.5^2)$.
+
+
+```python
+with model:
+    σ = pm.HalfNormal("σ", 2.5 * HALFNORMAL_SCALE)
+    obs = pm.Normal("obs", μ, σ, observed=std_df["logratio"])
+```
+
+We now sample from the posterior distribution of this model.
+
+
+```python
+SEED = 123456789
+CORES = 3
+
+SAMPLE_KWARGS = {
+    'cores': CORES,
+    'random_seed': [SEED + i for i in range(CORES)],
+    'return_inferencedata': True,
+    'target_accept': 0.95
+}
+```
+
+
+```python
+with model:
+    trace = pm.sample(**SAMPLE_KWARGS)
+```
+
+    Auto-assigning NUTS sampler...
+    Initializing NUTS using jitter+adapt_diag...
+    Multiprocess sampling (3 chains in 3 jobs)
+    NUTS: [μ_β, Δ_β, σ_β, σ]
+
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='6000' class='' max='6000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [6000/6000 02:21<00:00 Sampling 3 chains, 0 divergences]
+</div>
+
+
+
+    Sampling 3 chains for 1_000 tune and 1_000 draw iterations (3_000 + 3_000 draws total) took 142 seconds.
+
+
+None of the standard sampling diagnostics show cause for concern.
+
+
+```python
+az.plot_energy(trace);
+```
+
+
+<center>![png](/resources/splines_hetero_files/splines_hetero_40_0.png)</center>
+
+
+
+```python
+az.rhat(trace).max()
+```
+
+
+
+
+<div><svg style="position: absolute; width: 0; height: 0; overflow: hidden">
+<defs>
+<symbol id="icon-database" viewBox="0 0 32 32">
+<path d="M16 0c-8.837 0-16 2.239-16 5v4c0 2.761 7.163 5 16 5s16-2.239 16-5v-4c0-2.761-7.163-5-16-5z"></path>
+<path d="M16 17c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path>
+<path d="M16 26c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path>
+</symbol>
+<symbol id="icon-file-text2" viewBox="0 0 32 32">
+<path d="M28.681 7.159c-0.694-0.947-1.662-2.053-2.724-3.116s-2.169-2.030-3.116-2.724c-1.612-1.182-2.393-1.319-2.841-1.319h-15.5c-1.378 0-2.5 1.121-2.5 2.5v27c0 1.378 1.122 2.5 2.5 2.5h23c1.378 0 2.5-1.122 2.5-2.5v-19.5c0-0.448-0.137-1.23-1.319-2.841zM24.543 5.457c0.959 0.959 1.712 1.825 2.268 2.543h-4.811v-4.811c0.718 0.556 1.584 1.309 2.543 2.268zM28 29.5c0 0.271-0.229 0.5-0.5 0.5h-23c-0.271 0-0.5-0.229-0.5-0.5v-27c0-0.271 0.229-0.5 0.5-0.5 0 0 15.499-0 15.5 0v7c0 0.552 0.448 1 1 1h7v19.5z"></path>
+<path d="M23 26h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path>
+<path d="M23 22h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path>
+<path d="M23 18h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path>
+</symbol>
+</defs>
+</svg>
+<style>/* CSS stylesheet for displaying xarray objects in jupyterlab.
+ *
+ */
+
+:root {
+  --xr-font-color0: var(--jp-content-font-color0, rgba(0, 0, 0, 1));
+  --xr-font-color2: var(--jp-content-font-color2, rgba(0, 0, 0, 0.54));
+  --xr-font-color3: var(--jp-content-font-color3, rgba(0, 0, 0, 0.38));
+  --xr-border-color: var(--jp-border-color2, #e0e0e0);
+  --xr-disabled-color: var(--jp-layout-color3, #bdbdbd);
+  --xr-background-color: var(--jp-layout-color0, white);
+  --xr-background-color-row-even: var(--jp-layout-color1, white);
+  --xr-background-color-row-odd: var(--jp-layout-color2, #eeeeee);
+}
+
+html[theme=dark],
+body.vscode-dark {
+  --xr-font-color0: rgba(255, 255, 255, 1);
+  --xr-font-color2: rgba(255, 255, 255, 0.54);
+  --xr-font-color3: rgba(255, 255, 255, 0.38);
+  --xr-border-color: #1F1F1F;
+  --xr-disabled-color: #515151;
+  --xr-background-color: #111111;
+  --xr-background-color-row-even: #111111;
+  --xr-background-color-row-odd: #313131;
+}
+
+.xr-wrap {
+  display: block;
+  min-width: 300px;
+  max-width: 700px;
+}
+
+.xr-text-repr-fallback {
+  /* fallback to plain text repr when CSS is not injected (untrusted notebook) */
+  display: none;
+}
+
+.xr-header {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  border-bottom: solid 1px var(--xr-border-color);
+}
+
+.xr-header > div,
+.xr-header > ul {
+  display: inline;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.xr-obj-type,
+.xr-array-name {
+  margin-left: 2px;
+  margin-right: 10px;
+}
+
+.xr-obj-type {
+  color: var(--xr-font-color2);
+}
+
+.xr-sections {
+  padding-left: 0 !important;
+  display: grid;
+  grid-template-columns: 150px auto auto 1fr 20px 20px;
+}
+
+.xr-section-item {
+  display: contents;
+}
+
+.xr-section-item input {
+  display: none;
+}
+
+.xr-section-item input + label {
+  color: var(--xr-disabled-color);
+}
+
+.xr-section-item input:enabled + label {
+  cursor: pointer;
+  color: var(--xr-font-color2);
+}
+
+.xr-section-item input:enabled + label:hover {
+  color: var(--xr-font-color0);
+}
+
+.xr-section-summary {
+  grid-column: 1;
+  color: var(--xr-font-color2);
+  font-weight: 500;
+}
+
+.xr-section-summary > span {
+  display: inline-block;
+  padding-left: 0.5em;
+}
+
+.xr-section-summary-in:disabled + label {
+  color: var(--xr-font-color2);
+}
+
+.xr-section-summary-in + label:before {
+  display: inline-block;
+  content: '►';
+  font-size: 11px;
+  width: 15px;
+  text-align: center;
+}
+
+.xr-section-summary-in:disabled + label:before {
+  color: var(--xr-disabled-color);
+}
+
+.xr-section-summary-in:checked + label:before {
+  content: '▼';
+}
+
+.xr-section-summary-in:checked + label > span {
+  display: none;
+}
+
+.xr-section-summary,
+.xr-section-inline-details {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.xr-section-inline-details {
+  grid-column: 2 / -1;
+}
+
+.xr-section-details {
+  display: none;
+  grid-column: 1 / -1;
+  margin-bottom: 5px;
+}
+
+.xr-section-summary-in:checked ~ .xr-section-details {
+  display: contents;
+}
+
+.xr-array-wrap {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 20px auto;
+}
+
+.xr-array-wrap > label {
+  grid-column: 1;
+  vertical-align: top;
+}
+
+.xr-preview {
+  color: var(--xr-font-color3);
+}
+
+.xr-array-preview,
+.xr-array-data {
+  padding: 0 5px !important;
+  grid-column: 2;
+}
+
+.xr-array-data,
+.xr-array-in:checked ~ .xr-array-preview {
+  display: none;
+}
+
+.xr-array-in:checked ~ .xr-array-data,
+.xr-array-preview {
+  display: inline-block;
+}
+
+.xr-dim-list {
+  display: inline-block !important;
+  list-style: none;
+  padding: 0 !important;
+  margin: 0;
+}
+
+.xr-dim-list li {
+  display: inline-block;
+  padding: 0;
+  margin: 0;
+}
+
+.xr-dim-list:before {
+  content: '(';
+}
+
+.xr-dim-list:after {
+  content: ')';
+}
+
+.xr-dim-list li:not(:last-child):after {
+  content: ',';
+  padding-right: 5px;
+}
+
+.xr-has-index {
+  font-weight: bold;
+}
+
+.xr-var-list,
+.xr-var-item {
+  display: contents;
+}
+
+.xr-var-item > div,
+.xr-var-item label,
+.xr-var-item > .xr-var-name span {
+  background-color: var(--xr-background-color-row-even);
+  margin-bottom: 0;
+}
+
+.xr-var-item > .xr-var-name:hover span {
+  padding-right: 5px;
+}
+
+.xr-var-list > li:nth-child(odd) > div,
+.xr-var-list > li:nth-child(odd) > label,
+.xr-var-list > li:nth-child(odd) > .xr-var-name span {
+  background-color: var(--xr-background-color-row-odd);
+}
+
+.xr-var-name {
+  grid-column: 1;
+}
+
+.xr-var-dims {
+  grid-column: 2;
+}
+
+.xr-var-dtype {
+  grid-column: 3;
+  text-align: right;
+  color: var(--xr-font-color2);
+}
+
+.xr-var-preview {
+  grid-column: 4;
+}
+
+.xr-var-name,
+.xr-var-dims,
+.xr-var-dtype,
+.xr-preview,
+.xr-attrs dt {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 10px;
+}
+
+.xr-var-name:hover,
+.xr-var-dims:hover,
+.xr-var-dtype:hover,
+.xr-attrs dt:hover {
+  overflow: visible;
+  width: auto;
+  z-index: 1;
+}
+
+.xr-var-attrs,
+.xr-var-data {
+  display: none;
+  background-color: var(--xr-background-color) !important;
+  padding-bottom: 5px !important;
+}
+
+.xr-var-attrs-in:checked ~ .xr-var-attrs,
+.xr-var-data-in:checked ~ .xr-var-data {
+  display: block;
+}
+
+.xr-var-data > table {
+  float: right;
+}
+
+.xr-var-name span,
+.xr-var-data,
+.xr-attrs {
+  padding-left: 25px !important;
+}
+
+.xr-attrs,
+.xr-var-attrs,
+.xr-var-data {
+  grid-column: 1 / -1;
+}
+
+dl.xr-attrs {
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: 125px auto;
+}
+
+.xr-attrs dt,
+.xr-attrs dd {
+  padding: 0;
+  margin: 0;
+  float: left;
+  padding-right: 10px;
+  width: auto;
+}
+
+.xr-attrs dt {
+  font-weight: normal;
+  grid-column: 1;
+}
+
+.xr-attrs dt:hover span {
+  display: inline-block;
+  background: var(--xr-background-color);
+  padding-right: 10px;
+}
+
+.xr-attrs dd {
+  grid-column: 2;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.xr-icon-database,
+.xr-icon-file-text2 {
+  display: inline-block;
+  vertical-align: middle;
+  width: 1em;
+  height: 1.5em !important;
+  stroke-width: 0;
+  stroke: currentColor;
+  fill: currentColor;
+}
+</style><pre class='xr-text-repr-fallback'>&lt;xarray.Dataset&gt;
+Dimensions:  ()
+Data variables:
+    μ_β      float64 1.002
+    Δ_β      float64 1.003
+    σ_β      float64 1.003
+    σ        float64 1.001
+    β        float64 1.002</pre><div class='xr-wrap' hidden><div class='xr-header'><div class='xr-obj-type'>xarray.Dataset</div></div><ul class='xr-sections'><li class='xr-section-item'><input id='section-6be9e327-8217-444b-82ac-8d72e31b9762' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-6be9e327-8217-444b-82ac-8d72e31b9762' class='xr-section-summary'  title='Expand/collapse section'>Dimensions:</label><div class='xr-section-inline-details'></div><div class='xr-section-details'></div></li><li class='xr-section-item'><input id='section-262c20ca-f234-455e-a412-57ae50add49d' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-262c20ca-f234-455e-a412-57ae50add49d' class='xr-section-summary'  title='Expand/collapse section'>Coordinates: <span>(0)</span></label><div class='xr-section-inline-details'></div><div class='xr-section-details'><ul class='xr-var-list'></ul></div></li><li class='xr-section-item'><input id='section-4159528f-614b-4383-9914-6f8a2ee6919b' class='xr-section-summary-in' type='checkbox'  checked><label for='section-4159528f-614b-4383-9914-6f8a2ee6919b' class='xr-section-summary' >Data variables: <span>(5)</span></label><div class='xr-section-inline-details'></div><div class='xr-section-details'><ul class='xr-var-list'><li class='xr-var-item'><div class='xr-var-name'><span>μ_β</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.002</div><input id='attrs-e3ef8664-98c0-491b-9e90-f9df14021341' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-e3ef8664-98c0-491b-9e90-f9df14021341' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-3cc66f89-032b-4da6-90dc-c9f43e377ae6' class='xr-var-data-in' type='checkbox'><label for='data-3cc66f89-032b-4da6-90dc-c9f43e377ae6' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.00177301)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>Δ_β</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.003</div><input id='attrs-f7d29b36-94b4-49ae-8a0a-604226555c27' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-f7d29b36-94b4-49ae-8a0a-604226555c27' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-788b1891-2d2f-470c-831c-6e0f03a8efb6' class='xr-var-data-in' type='checkbox'><label for='data-788b1891-2d2f-470c-831c-6e0f03a8efb6' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.00304857)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>σ_β</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.003</div><input id='attrs-44f8d525-edee-4f7b-911c-81dfb07460b6' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-44f8d525-edee-4f7b-911c-81dfb07460b6' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-f79ac85a-eba8-4c81-a547-6d99db461896' class='xr-var-data-in' type='checkbox'><label for='data-f79ac85a-eba8-4c81-a547-6d99db461896' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.00278469)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>σ</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.001</div><input id='attrs-e981d8e5-65ab-4f10-b947-5976f10b9c2e' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-e981d8e5-65ab-4f10-b947-5976f10b9c2e' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-902e30d3-d247-469e-99db-87992ac032a3' class='xr-var-data-in' type='checkbox'><label for='data-902e30d3-d247-469e-99db-87992ac032a3' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.00087722)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>β</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.002</div><input id='attrs-e31c6ee9-83ae-44b9-a2a2-ae7915a5da0e' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-e31c6ee9-83ae-44b9-a2a2-ae7915a5da0e' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-6b553585-f795-42a2-9667-242dc6c723e9' class='xr-var-data-in' type='checkbox'><label for='data-6b553585-f795-42a2-9667-242dc6c723e9' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.00209198)</pre></div></li></ul></div></li><li class='xr-section-item'><input id='section-879965fa-b95c-4639-8d79-138f8d4b19dd' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-879965fa-b95c-4639-8d79-138f8d4b19dd' class='xr-section-summary'  title='Expand/collapse section'>Attributes: <span>(0)</span></label><div class='xr-section-inline-details'></div><div class='xr-section-details'><dl class='xr-attrs'></dl></div></li></ul></div></div>
+
+
+
+To visualize our predictions, we sample from the posterior predictive distribution along a grid of reasonable values for `range`.
+
+
+```python
+pp_range = np.linspace(-1.75, 1.75, 100)
+dmat.set_value(basis(pp_range))
+```
+
+
+```python
+with model:
+    pp_trace = pm.sample_posterior_predictive(trace)
+```
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='3000' class='' max='3000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [3000/3000 00:00<00:00]
+</div>
+
+
+
+We now plot the posterior predictions.
+
+
+```python
+fig, (std_ax, joint_ax) = plt.subplots(
+    nrows=2, sharex=True, sharey=False,
+    gridspec_kw={'height_ratios': [1, 4]}
+)
+
+low, high = np.percentile(pp_trace["obs"], [2.5, 97.5], axis=0)
+joint_ax.fill_between(pp_range, low, high,
+                      color='k', alpha=0.25,
+                      label="95% credible interval");
+
+sns.scatterplot(x="range", y="logratio", data=std_df,
+                alpha=0.5, ax=joint_ax);
+
+(std_df.groupby(std_df["range"].round(1))
+       ["logratio"]
+       .std()
+       .rolling(5)
+       .mean()
+       .plot(ax=std_ax, label="Actual"));
+
+std_ax.plot(pp_range, pp_trace["obs"].std(axis=0),
+            c='k', label="Posterior predictive");
+
+joint_ax.plot(pp_range, pp_trace["obs"].mean(axis=0),
+              c='k', label="Posterior expected value");
+
+std_ax.set_ylabel("Standard\ndeviation\n(binned)");
+
+std_ax.legend(loc='upper left', bbox_to_anchor=(0., 1.65));
+joint_ax.legend(loc='lower left');
+fig.tight_layout();
+```
+
+
+<center>![png](/resources/splines_hetero_files/splines_hetero_46_0.png)</center>
+
+
+Visually, we appear to have captured the relationship between `range` and the expected value of `logratio` reasonably well.  The credible interval and  the standard deviation above are a bit odd though.  We have built a homoskedastic (same-variance) observational model, so the credible interval has roughly the same width, even though the data show a small variance for small values of range, and variance increases as `range` does.
+
+### Accounting for heteroskedasticity
+
+In order to remedy this issue, we will build a heteroskedastic model that allows the variance of `logratio` to vary with `ratio`.  In fact, we will use a spline to model the changing variance as well.
+
+Let $\gamma_j$ come from a GRW similar to $\beta_j$.  We define
+
+$$
+\begin{align*}
+    \eta_{\sigma}\ |\ X
+        & = \sum_{j = 1}^{20} \gamma_j \cdot B_{j, k; \mathbf{x}^*}(X) \\
+    \sigma\ |\ X
+        & = 0.05 + \exp(\eta_{\sigma}).
+\end{align*}
+$$
+
+Note that the $0.05$ factor in the definition of $\sigma\ |\ X$ sets a lower bound on the variance, which is necessary for computational stability.
+
+The model is a straightforward adaptation of the homoskedastic one.
+
+
+```python
+dmat.set_value(basis(std_df["range"]))
+```
+
+
+```python
+with pm.Model(coords=coords) as var_model:
+    β0 = pm.Normal("β0", 0., 2.5)
+    Δ_β = pm.Normal("Δ_β", 0., 1., dims="knot")
+    σ_β = pm.HalfNormal("σ_β", 2.5 * HALFNORMAL_SCALE)
+    β = pm.Deterministic("β", β0 + Δ_β.cumsum() * σ_β,
+                         dims="knot")
+    μ = at.dot(dmat, β)
+    
+    γ0 = pm.Normal("γ0", 0., 2.5)
+    Δ_γ = pm.Normal("Δ_γ", 0., 1., dims="knot")
+    σ_γ = pm.HalfNormal("σ_γ", 2.5 * HALFNORMAL_SCALE)
+    γ = pm.Deterministic("γ", γ0 + Δ_γ.cumsum() * σ_γ,
+                         dims="knot")
+    η_σ = at.dot(dmat, γ)
+    σ = 0.05 + at.exp(η_σ)
+
+    obs = pm.Normal("obs", μ, σ, observed=std_df["logratio"])
+```
+
+We now sample from this model.
+
+
+```python
+with var_model:
+    var_trace = pm.sample(**SAMPLE_KWARGS)
+```
+
+    Auto-assigning NUTS sampler...
+    Initializing NUTS using jitter+adapt_diag...
+    Multiprocess sampling (3 chains in 3 jobs)
+    NUTS: [β0, Δ_β, σ_β, γ0, Δ_γ, σ_γ]
+
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='6000' class='' max='6000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [6000/6000 04:42<00:00 Sampling 3 chains, 0 divergences]
+</div>
+
+
+
+    Sampling 3 chains for 1_000 tune and 1_000 draw iterations (3_000 + 3_000 draws total) took 282 seconds.
+
+
+Again the sampling diagnostics show no cause for concern.
+
+
+```python
+az.plot_energy(var_trace);
+```
+
+
+<center>![png](/resources/splines_hetero_files/splines_hetero_54_0.png)</center>
+
+
+
+```python
+az.rhat(var_trace).max()
+```
+
+
+
+
+<div><svg style="position: absolute; width: 0; height: 0; overflow: hidden">
+<defs>
+<symbol id="icon-database" viewBox="0 0 32 32">
+<path d="M16 0c-8.837 0-16 2.239-16 5v4c0 2.761 7.163 5 16 5s16-2.239 16-5v-4c0-2.761-7.163-5-16-5z"></path>
+<path d="M16 17c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path>
+<path d="M16 26c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path>
+</symbol>
+<symbol id="icon-file-text2" viewBox="0 0 32 32">
+<path d="M28.681 7.159c-0.694-0.947-1.662-2.053-2.724-3.116s-2.169-2.030-3.116-2.724c-1.612-1.182-2.393-1.319-2.841-1.319h-15.5c-1.378 0-2.5 1.121-2.5 2.5v27c0 1.378 1.122 2.5 2.5 2.5h23c1.378 0 2.5-1.122 2.5-2.5v-19.5c0-0.448-0.137-1.23-1.319-2.841zM24.543 5.457c0.959 0.959 1.712 1.825 2.268 2.543h-4.811v-4.811c0.718 0.556 1.584 1.309 2.543 2.268zM28 29.5c0 0.271-0.229 0.5-0.5 0.5h-23c-0.271 0-0.5-0.229-0.5-0.5v-27c0-0.271 0.229-0.5 0.5-0.5 0 0 15.499-0 15.5 0v7c0 0.552 0.448 1 1 1h7v19.5z"></path>
+<path d="M23 26h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path>
+<path d="M23 22h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path>
+<path d="M23 18h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path>
+</symbol>
+</defs>
+</svg>
+<style>/* CSS stylesheet for displaying xarray objects in jupyterlab.
+ *
+ */
+
+:root {
+  --xr-font-color0: var(--jp-content-font-color0, rgba(0, 0, 0, 1));
+  --xr-font-color2: var(--jp-content-font-color2, rgba(0, 0, 0, 0.54));
+  --xr-font-color3: var(--jp-content-font-color3, rgba(0, 0, 0, 0.38));
+  --xr-border-color: var(--jp-border-color2, #e0e0e0);
+  --xr-disabled-color: var(--jp-layout-color3, #bdbdbd);
+  --xr-background-color: var(--jp-layout-color0, white);
+  --xr-background-color-row-even: var(--jp-layout-color1, white);
+  --xr-background-color-row-odd: var(--jp-layout-color2, #eeeeee);
+}
+
+html[theme=dark],
+body.vscode-dark {
+  --xr-font-color0: rgba(255, 255, 255, 1);
+  --xr-font-color2: rgba(255, 255, 255, 0.54);
+  --xr-font-color3: rgba(255, 255, 255, 0.38);
+  --xr-border-color: #1F1F1F;
+  --xr-disabled-color: #515151;
+  --xr-background-color: #111111;
+  --xr-background-color-row-even: #111111;
+  --xr-background-color-row-odd: #313131;
+}
+
+.xr-wrap {
+  display: block;
+  min-width: 300px;
+  max-width: 700px;
+}
+
+.xr-text-repr-fallback {
+  /* fallback to plain text repr when CSS is not injected (untrusted notebook) */
+  display: none;
+}
+
+.xr-header {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  border-bottom: solid 1px var(--xr-border-color);
+}
+
+.xr-header > div,
+.xr-header > ul {
+  display: inline;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.xr-obj-type,
+.xr-array-name {
+  margin-left: 2px;
+  margin-right: 10px;
+}
+
+.xr-obj-type {
+  color: var(--xr-font-color2);
+}
+
+.xr-sections {
+  padding-left: 0 !important;
+  display: grid;
+  grid-template-columns: 150px auto auto 1fr 20px 20px;
+}
+
+.xr-section-item {
+  display: contents;
+}
+
+.xr-section-item input {
+  display: none;
+}
+
+.xr-section-item input + label {
+  color: var(--xr-disabled-color);
+}
+
+.xr-section-item input:enabled + label {
+  cursor: pointer;
+  color: var(--xr-font-color2);
+}
+
+.xr-section-item input:enabled + label:hover {
+  color: var(--xr-font-color0);
+}
+
+.xr-section-summary {
+  grid-column: 1;
+  color: var(--xr-font-color2);
+  font-weight: 500;
+}
+
+.xr-section-summary > span {
+  display: inline-block;
+  padding-left: 0.5em;
+}
+
+.xr-section-summary-in:disabled + label {
+  color: var(--xr-font-color2);
+}
+
+.xr-section-summary-in + label:before {
+  display: inline-block;
+  content: '►';
+  font-size: 11px;
+  width: 15px;
+  text-align: center;
+}
+
+.xr-section-summary-in:disabled + label:before {
+  color: var(--xr-disabled-color);
+}
+
+.xr-section-summary-in:checked + label:before {
+  content: '▼';
+}
+
+.xr-section-summary-in:checked + label > span {
+  display: none;
+}
+
+.xr-section-summary,
+.xr-section-inline-details {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.xr-section-inline-details {
+  grid-column: 2 / -1;
+}
+
+.xr-section-details {
+  display: none;
+  grid-column: 1 / -1;
+  margin-bottom: 5px;
+}
+
+.xr-section-summary-in:checked ~ .xr-section-details {
+  display: contents;
+}
+
+.xr-array-wrap {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 20px auto;
+}
+
+.xr-array-wrap > label {
+  grid-column: 1;
+  vertical-align: top;
+}
+
+.xr-preview {
+  color: var(--xr-font-color3);
+}
+
+.xr-array-preview,
+.xr-array-data {
+  padding: 0 5px !important;
+  grid-column: 2;
+}
+
+.xr-array-data,
+.xr-array-in:checked ~ .xr-array-preview {
+  display: none;
+}
+
+.xr-array-in:checked ~ .xr-array-data,
+.xr-array-preview {
+  display: inline-block;
+}
+
+.xr-dim-list {
+  display: inline-block !important;
+  list-style: none;
+  padding: 0 !important;
+  margin: 0;
+}
+
+.xr-dim-list li {
+  display: inline-block;
+  padding: 0;
+  margin: 0;
+}
+
+.xr-dim-list:before {
+  content: '(';
+}
+
+.xr-dim-list:after {
+  content: ')';
+}
+
+.xr-dim-list li:not(:last-child):after {
+  content: ',';
+  padding-right: 5px;
+}
+
+.xr-has-index {
+  font-weight: bold;
+}
+
+.xr-var-list,
+.xr-var-item {
+  display: contents;
+}
+
+.xr-var-item > div,
+.xr-var-item label,
+.xr-var-item > .xr-var-name span {
+  background-color: var(--xr-background-color-row-even);
+  margin-bottom: 0;
+}
+
+.xr-var-item > .xr-var-name:hover span {
+  padding-right: 5px;
+}
+
+.xr-var-list > li:nth-child(odd) > div,
+.xr-var-list > li:nth-child(odd) > label,
+.xr-var-list > li:nth-child(odd) > .xr-var-name span {
+  background-color: var(--xr-background-color-row-odd);
+}
+
+.xr-var-name {
+  grid-column: 1;
+}
+
+.xr-var-dims {
+  grid-column: 2;
+}
+
+.xr-var-dtype {
+  grid-column: 3;
+  text-align: right;
+  color: var(--xr-font-color2);
+}
+
+.xr-var-preview {
+  grid-column: 4;
+}
+
+.xr-var-name,
+.xr-var-dims,
+.xr-var-dtype,
+.xr-preview,
+.xr-attrs dt {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 10px;
+}
+
+.xr-var-name:hover,
+.xr-var-dims:hover,
+.xr-var-dtype:hover,
+.xr-attrs dt:hover {
+  overflow: visible;
+  width: auto;
+  z-index: 1;
+}
+
+.xr-var-attrs,
+.xr-var-data {
+  display: none;
+  background-color: var(--xr-background-color) !important;
+  padding-bottom: 5px !important;
+}
+
+.xr-var-attrs-in:checked ~ .xr-var-attrs,
+.xr-var-data-in:checked ~ .xr-var-data {
+  display: block;
+}
+
+.xr-var-data > table {
+  float: right;
+}
+
+.xr-var-name span,
+.xr-var-data,
+.xr-attrs {
+  padding-left: 25px !important;
+}
+
+.xr-attrs,
+.xr-var-attrs,
+.xr-var-data {
+  grid-column: 1 / -1;
+}
+
+dl.xr-attrs {
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: 125px auto;
+}
+
+.xr-attrs dt,
+.xr-attrs dd {
+  padding: 0;
+  margin: 0;
+  float: left;
+  padding-right: 10px;
+  width: auto;
+}
+
+.xr-attrs dt {
+  font-weight: normal;
+  grid-column: 1;
+}
+
+.xr-attrs dt:hover span {
+  display: inline-block;
+  background: var(--xr-background-color);
+  padding-right: 10px;
+}
+
+.xr-attrs dd {
+  grid-column: 2;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.xr-icon-database,
+.xr-icon-file-text2 {
+  display: inline-block;
+  vertical-align: middle;
+  width: 1em;
+  height: 1.5em !important;
+  stroke-width: 0;
+  stroke: currentColor;
+  fill: currentColor;
+}
+</style><pre class='xr-text-repr-fallback'>&lt;xarray.Dataset&gt;
+Dimensions:  ()
+Data variables:
+    β0       float64 0.9998
+    Δ_β      float64 1.006
+    σ_β      float64 1.0
+    γ0       float64 1.001
+    Δ_γ      float64 1.005
+    σ_γ      float64 1.0
+    β        float64 1.002
+    γ        float64 1.002</pre><div class='xr-wrap' hidden><div class='xr-header'><div class='xr-obj-type'>xarray.Dataset</div></div><ul class='xr-sections'><li class='xr-section-item'><input id='section-7362aa37-9f8a-4802-b82c-c036e0ce48e8' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-7362aa37-9f8a-4802-b82c-c036e0ce48e8' class='xr-section-summary'  title='Expand/collapse section'>Dimensions:</label><div class='xr-section-inline-details'></div><div class='xr-section-details'></div></li><li class='xr-section-item'><input id='section-0c5a2fdc-6a32-4688-af4c-eb27e082d3d5' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-0c5a2fdc-6a32-4688-af4c-eb27e082d3d5' class='xr-section-summary'  title='Expand/collapse section'>Coordinates: <span>(0)</span></label><div class='xr-section-inline-details'></div><div class='xr-section-details'><ul class='xr-var-list'></ul></div></li><li class='xr-section-item'><input id='section-b29bc7b8-3e4e-4279-aac8-20d38dd7d09c' class='xr-section-summary-in' type='checkbox'  checked><label for='section-b29bc7b8-3e4e-4279-aac8-20d38dd7d09c' class='xr-section-summary' >Data variables: <span>(8)</span></label><div class='xr-section-inline-details'></div><div class='xr-section-details'><ul class='xr-var-list'><li class='xr-var-item'><div class='xr-var-name'><span>β0</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>0.9998</div><input id='attrs-1f5170ce-ccfc-4311-8246-d9e627ab323e' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-1f5170ce-ccfc-4311-8246-d9e627ab323e' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-cd3e8eda-7d32-4aad-83e5-9d277c2f3e56' class='xr-var-data-in' type='checkbox'><label for='data-cd3e8eda-7d32-4aad-83e5-9d277c2f3e56' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(0.99984598)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>Δ_β</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.006</div><input id='attrs-089a661f-4ba0-464e-97a8-dc623d98dca7' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-089a661f-4ba0-464e-97a8-dc623d98dca7' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-9e4f120d-d01c-4a49-b8fb-3ae5672f9b45' class='xr-var-data-in' type='checkbox'><label for='data-9e4f120d-d01c-4a49-b8fb-3ae5672f9b45' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.00613202)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>σ_β</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.0</div><input id='attrs-551b992b-dfb9-4dc0-9da0-480350993952' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-551b992b-dfb9-4dc0-9da0-480350993952' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-4149d6bf-ce6e-4073-bcdd-806b4ccd5069' class='xr-var-data-in' type='checkbox'><label for='data-4149d6bf-ce6e-4073-bcdd-806b4ccd5069' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.00047073)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>γ0</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.001</div><input id='attrs-12f3c607-8ac1-4f55-ac6e-407119acf580' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-12f3c607-8ac1-4f55-ac6e-407119acf580' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-38f8b3df-a0d6-45cf-ba57-2bca9b92d994' class='xr-var-data-in' type='checkbox'><label for='data-38f8b3df-a0d6-45cf-ba57-2bca9b92d994' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.0010354)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>Δ_γ</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.005</div><input id='attrs-790917a7-b6d6-4286-9eb9-f0e8100d6d30' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-790917a7-b6d6-4286-9eb9-f0e8100d6d30' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-f01e1c18-b63b-40ad-825c-bfcf0e39f3a3' class='xr-var-data-in' type='checkbox'><label for='data-f01e1c18-b63b-40ad-825c-bfcf0e39f3a3' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.00481044)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>σ_γ</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.0</div><input id='attrs-d4e97dad-29e0-4a7a-baf7-9f4eeb46dc58' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-d4e97dad-29e0-4a7a-baf7-9f4eeb46dc58' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-1afcb5f6-1ba2-481e-b828-aae93a973229' class='xr-var-data-in' type='checkbox'><label for='data-1afcb5f6-1ba2-481e-b828-aae93a973229' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.00035778)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>β</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.002</div><input id='attrs-4c219615-905a-408d-9278-74f6bcce7310' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-4c219615-905a-408d-9278-74f6bcce7310' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-21ad6f14-44b1-40af-9a70-a205599bf077' class='xr-var-data-in' type='checkbox'><label for='data-21ad6f14-44b1-40af-9a70-a205599bf077' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.00226144)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>γ</span></div><div class='xr-var-dims'>()</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>1.002</div><input id='attrs-8c961902-eca0-4928-8bd5-1f83664db8a4' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-8c961902-eca0-4928-8bd5-1f83664db8a4' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-26417bc1-f4bb-47f5-b133-2661c4174d78' class='xr-var-data-in' type='checkbox'><label for='data-26417bc1-f4bb-47f5-b133-2661c4174d78' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'></dl></div><div class='xr-var-data'><pre>array(1.00190525)</pre></div></li></ul></div></li><li class='xr-section-item'><input id='section-ec411289-4373-47ec-93b8-5f529dd60452' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-ec411289-4373-47ec-93b8-5f529dd60452' class='xr-section-summary'  title='Expand/collapse section'>Attributes: <span>(0)</span></label><div class='xr-section-inline-details'></div><div class='xr-section-details'><dl class='xr-attrs'></dl></div></li></ul></div></div>
+
+
+
+We do see that the values of $\gamma_j$ that correspond to small values of `range` have small coefficients, and the coefficients grow as `range` gets larger.
+
+
+```python
+ax, = az.plot_forest(var_trace, var_names=["γ"])
+
+ax.set_xlabel(r"$\gamma_j$");
+
+ax.set_yticklabels(np.arange(N_KNOT)[::-1]);
+ax.set_ylabel("$j$");
+```
+
+
+<center>![png](/resources/splines_hetero_files/splines_hetero_57_0.png)</center>
+
+
+Again we sample from the posterior predictive distribution of this model.
+
+
+```python
+dmat.set_value(basis(pp_range))
+```
+
+
+```python
+with var_model:
+    pp_var_trace = pm.sample_posterior_predictive(var_trace)
+```
+
+
+
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value='3000' class='' max='3000' style='width:300px; height:20px; vertical-align: middle;'></progress>
+100.00% [3000/3000 00:00<00:00]
+</div>
+
+
+
+We plot these predictions in order to compare them to those of the homoskedastic model.
+
+
+```python
+fig, (std_ax, joint_ax) = plt.subplots(
+    nrows=2, sharex=True, sharey=False,
+    gridspec_kw={'height_ratios': [1, 4]}
+)
+
+low, high = np.percentile(pp_var_trace["obs"], [2.5, 97.5], axis=0)
+joint_ax.fill_between(pp_range, low, high,
+                      color='k', alpha=0.25,
+                      label="95% credible interval");
+
+sns.scatterplot(x="range", y="logratio", data=std_df,
+                alpha=0.5, ax=joint_ax);
+
+(std_df.groupby(std_df["range"].round(1))
+       ["logratio"]
+       .std()
+       .rolling(5)
+       .mean()
+       .plot(ax=std_ax, label="Actual"));
+
+std_ax.plot(pp_range, pp_trace["obs"].std(axis=0),
+            c='k', label="Posterior predictive\n(homoskedastic)");
+std_ax.plot(pp_range, pp_var_trace["obs"].std(axis=0),
+            c='r', ls='--',
+            label="Posterior predictive\n(heteroskedastic)");
+
+joint_ax.plot(pp_range, pp_trace["obs"].mean(axis=0),
+              c='k', label="Posterior predictive\n(homoskedastic)");
+joint_ax.plot(pp_range, pp_var_trace["obs"].mean(axis=0),
+              c='r', ls='--',
+              label="Posterior predictive\n(heteroskedastic)");
+
+std_ax.set_ylabel("Standard\ndeviation\n(binned)");
+
+std_ax.legend(loc='upper left', ncol=3,
+              bbox_to_anchor=(0., 1.6));
+joint_ax.legend(loc='lower left');
+fig.tight_layout();
+```
+
+
+<center>![png](/resources/splines_hetero_files/splines_hetero_62_0.png)</center>
+
+
+We see that the homo- and heteroskedastic models produce essentially the same estimate of the expected value of `logratio`, but that the heteroskedastic model comes closer to capturing the true change in the variance.
+
+We now compare these two models using [Pareto-smoothed importance sampling leave-one-out cross-validation](https://arxiv.org/abs/1507.04544) (PSIS-LOO).
+
+
+```python
+traces = {
+    'Homoskedastic': trace,
+    'Heteroskedastic': var_trace
+}
+```
+
+
+```python
+comp_df = az.compare(traces)
+```
+
+
+```python
+comp_df.loc[:, :"weight"]
+```
+
+
+
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th></th>
+<th>rank</th>
+<th>loo</th>
+<th>p_loo</th>
+<th>d_loo</th>
+<th>weight</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>Heteroskedastic</th>
+<td>0</td>
+<td>41.369658</td>
+<td>17.759399</td>
+<td>0.000000</td>
+<td>1.000000e+00</td>
+</tr>
+<tr>
+<th>Homoskedastic</th>
+<td>1</td>
+<td>-41.703944</td>
+<td>14.188435</td>
+<td>83.073602</td>
+<td>8.058976e-11</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<br>
+
+
+
+
+```python
+fig, ax = plt.subplots()
+
+az.plot_compare(comp_df, plot_ic_diff=False, ax=ax);
+```
+
+
+<center>![png](/resources/splines_hetero_files/splines_hetero_67_0.png)</center>
+
+
+Interestingly, the PSIS-LOO score for the heteroskedastic model is significantly higher than that of the homoskedastic model, even though these two models predict essentially the same conditional mean.
+
+This post is available as a Jupyter notebook [here](https://nbviewer.jupyter.org/gist/AustinRochford/2b7a0f79457dc6b593309db433ecbedd).
